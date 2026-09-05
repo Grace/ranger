@@ -175,3 +175,38 @@ func findOp(t *testing.T, m map[trace.Operation]*Profile, service string) trace.
 	t.Fatalf("no operation for service %q", service)
 	return trace.Operation{}
 }
+
+// Real traces, not the synthetic ones above, found this: a caller of a service
+// that slowed by 1.9s picks up a few milliseconds of its own noise in the same
+// window. That clears any absolute floor, and testing the floor before the
+// proportion labelled the caller "slower" when its duration had moved five
+// hundred times more than its own work.
+//
+// The numbers here are the ones the OpenTelemetry Demo actually produced under
+// adManualGc: self +3.6ms against duration +1885.6ms.
+func TestACallerWithItsOwnNoiseIsStillAWaiter(t *testing.T) {
+	baselineTraces := chain(60, 7*time.Millisecond, 5*time.Millisecond, false)
+	// The callee gains 1.89s; the caller gains that plus 3.6ms of its own.
+	incidentTraces := chain(60, 1893*time.Millisecond, 5*time.Millisecond+3600*time.Microsecond, false)
+
+	res := localize(t, baselineTraces, incidentTraces)
+	if !res.Localized {
+		t.Fatal("expected a localization")
+	}
+	if got := res.Candidates[0].Op.Service; got != "postgres" {
+		t.Errorf("blamed %q, want postgres", got)
+	}
+
+	for _, c := range res.Candidates {
+		if c.Op.Service != "frontend" {
+			continue
+		}
+		if c.Verdict != WaitingOnSomethingBelow {
+			t.Errorf("frontend verdict = %q (self %v, duration %v), want %q",
+				c.Verdict, c.SelfTimeShift, c.DurationShift, WaitingOnSomethingBelow)
+		}
+		if c.Score != 0 {
+			t.Errorf("frontend scored %v, want 0 — a waiter is never a cause", c.Score)
+		}
+	}
+}

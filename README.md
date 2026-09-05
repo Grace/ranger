@@ -22,13 +22,42 @@ Two properties follow, and neither is available to an LLM-first design:
 
 ## Status
 
-Pre-alpha. Nothing works yet.
+Pre-alpha. The localizer works and has been run once against a real incident;
+there is no accuracy number yet.
+
+`inquest localize` reads two windows of OTLP/JSON from the OpenTelemetry
+Collector's file exporter, ranks operations, and writes a self-contained HTML
+report. `inquest eval` scores a manifest of labeled incidents. `deploy/` has
+the runbook for producing those windows from the OpenTelemetry Demo.
 
 ## Accuracy
 
 The point of this project is a published, reproducible accuracy number against
-labeled failures. Until that number exists here, treat any claim about
-localization quality as unsupported.
+labeled failures. **That number does not exist yet, so treat any claim about
+localization quality as unsupported.**
+
+What has been run, once, on opentelemetry-demo `8c47d47`:
+
+| flag | expected | inquest said | |
+| --- | --- | --- | --- |
+| `adManualGc` | `ad` | `ad · oteldemo.AdService/GetAds` — self time 6.96ms → 1.89s, z 410 | correct |
+
+The runner-up scored 0.5, so the margin was not close. One case is an anecdote.
+`deploy/README.md` is how the rest get produced.
+
+### What that one case already taught
+
+The frontend's client span for the same call moved **+1885.6ms in duration and
++3.6ms in self time** — it was waiting, not slow. inquest called it *slower*,
+because the classifier tested an absolute floor before the proportion and 3.6ms
+clears any sane floor. Real traces are noisy in a way the synthetic tests were
+not. Waiting is now decided on proportion first, and the demo's own numbers are
+a regression test.
+
+`intlShippingSlowdown` looked like the cleanest case on paper and is not usable:
+it only delays non-US addresses, and one of the nine load-generator personas is
+Canadian. Roughly a tenth of an already-rare operation is affected, which is
+below the sample floor and a tail effect rather than a shift.
 
 ## License
 

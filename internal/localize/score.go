@@ -72,6 +72,16 @@ type Options struct {
 	ReportThreshold float64
 }
 
+// waitingShare is how much of an operation's slowdown its own work has to
+// account for before that operation can be called a cause. Below this, the
+// slowdown came from underneath it.
+//
+// A fifth is deliberately generous to the caller: an operation genuinely
+// getting slower on its own usually accounts for most of its own regression,
+// and the cost of being wrong in this direction — hiding a real cause — is
+// higher than the cost of showing one extra waiter in the list.
+const waitingShare = 0.2
+
 // DefaultOptions are the thresholds used when none are given.
 func DefaultOptions() Options {
 	return Options{
@@ -173,23 +183,35 @@ func classify(c Candidate, opt Options) (Verdict, float64) {
 	errMoved := c.ErrorRateShift >= opt.MinErrorRateShift
 	selfMoved := c.SelfTimeShift >= opt.MinSelfTimeShift && c.SelfTimeZ > 0
 
-	// A duration shift that self time does not account for is downstream.
-	// Requiring the duration shift to be materially larger keeps ordinary
-	// measurement noise from reclassifying a real local slowdown.
+	// Waiting is a question about proportion, not about absolute size: did
+	// this operation's own work account for its slowdown, or did something
+	// below it?
+	//
+	// Testing an absolute floor first gets this wrong on real traces. A
+	// caller of a service that slowed by 1.9s picks up a few milliseconds of
+	// its own noise in the same window; that clears any sane floor and the
+	// operation gets called "slower" when its duration moved five hundred
+	// times more than its own work did. The demo produced exactly that —
+	// frontend's client span for a call into a service in the middle of a
+	// GC pause: self +3.6ms, duration +1885.6ms.
+	//
+	// So the proportion is asked first, and only an operation whose own work
+	// explains a real share of its slowdown is a candidate for a cause.
 	waiting := c.DurationShift >= opt.MinSelfTimeShift &&
-		c.DurationShift > 2*max(c.SelfTimeShift, 0) && !selfMoved
+		float64(max(c.SelfTimeShift, 0)) < waitingShare*float64(c.DurationShift)
 
 	switch {
-	case errMoved && selfMoved:
+	case errMoved && selfMoved && !waiting:
 		return Failing, c.SelfTimeZ + 10*c.ErrorRateShift
-	case errMoved:
+	case errMoved && !waiting:
 		return Failing, 10 * c.ErrorRateShift
+	case waiting:
+		// Scored zero and never promoted to an answer. Showing it is still
+		// useful: these operations are the path from the symptom down to the
+		// cause, which is what an on-call engineer is actually holding.
+		return WaitingOnSomethingBelow, 0
 	case selfMoved:
 		return Slower, c.SelfTimeZ
-	case waiting:
-		// Scored, but never promoted to an answer. Showing it is useful: it
-		// is the path from the symptom down to the cause.
-		return WaitingOnSomethingBelow, 0
 	default:
 		return Slower, 0
 	}
