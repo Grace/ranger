@@ -1,0 +1,12 @@
+# Mounts a host directory into the collector so the file exporter's output is
+# reachable from outside the container.
+#
+#   docker compose -f docker-compose.yml -f /path/to/this/file up
+#
+# Create ./inquest-traces next to the demo's compose file first; the collector
+# does not run as root and will not create it.
+
+services:
+  otel-collector:
+    volumes:
+      - ./inquest-traces:/tmp/inquest

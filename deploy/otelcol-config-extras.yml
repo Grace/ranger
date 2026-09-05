@@ -1,0 +1,32 @@
+# Drop this into the OpenTelemetry Demo at
+# src/otel-collector/otelcol-config-extras.yml — the demo merges it into the
+# collector's own config, which is the supported extension point.
+#
+# GOTCHA, and it will cost you an hour if you miss it: the merge REPLACES
+# lists rather than appending to them. The exporters line below therefore has
+# to repeat the demo's own exporters, or you will silently turn off everything
+# except this one. Check the demo's otelcol-config.yml for the current list
+# before copying this — it changes between releases.
+
+exporters:
+  file/inquest:
+    path: /tmp/inquest/traces.jsonl
+    # Rotation off: a window is captured by truncating this file and waiting,
+    # and a rotated file would take half the window with it.
+    rotation:
+      max_megabytes: 0
+
+  # Optional. Point the same traces at Honeycomb so the exact incident inquest
+  # localizes can be opened in BubbleUp next to it. Needs HONEYCOMB_API_KEY in
+  # the demo's .env; the free tier is enough to send data, and none of what
+  # inquest does depends on it.
+  #
+  # otlp/honeycomb:
+  #   endpoint: "api.honeycomb.io:443"
+  #   headers:
+  #     "x-honeycomb-team": "${env:HONEYCOMB_API_KEY}"
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlp, debug, spanmetrics, file/inquest]

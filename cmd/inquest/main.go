@@ -31,6 +31,8 @@ func main() {
 		err = localizeCmd(os.Args[2:])
 	case "demo":
 		err = demoCmd(os.Args[2:])
+	case "eval":
+		err = evalCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -49,6 +51,7 @@ func usage() {
 
   inquest localize -baseline <file> -incident <file> [-out report.html]
   inquest demo [-out report.html]
+  inquest eval -cases <manifest.json>
 
 Inputs are newline-delimited OTLP/JSON from the OpenTelemetry Collector's
 file exporter.

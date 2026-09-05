@@ -1,0 +1,11 @@
+[
+  {
+    "name": "example — replace this entire file",
+    "flag": "READ src/flagd/demo.flagd.json IN YOUR DEMO CHECKOUT",
+    "expectService": "the service whose own work changed, not where the symptom appeared",
+    "expectOperation": "",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-example.jsonl",
+    "notes": "Flag names differ between demo releases. Do not copy a flag list from documentation, including inquest's own — read the demo's flagd config and record what is actually there."
+  }
+]
