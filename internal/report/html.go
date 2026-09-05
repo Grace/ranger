@@ -106,6 +106,8 @@ table.traces tr { cursor:pointer; }
 table.traces tr:hover td { background:var(--panel); }
 table.traces tr[aria-selected="true"] td { background:var(--panel); box-shadow:inset 3px 0 0 var(--own); }
 .dot { display:inline-block; width:6px; height:6px; border-radius:50%%; background:var(--oxblood); margin-right:6px; }
+.cause-tag { margin-left:7px; font-size:9px; text-transform:uppercase; letter-spacing:0.6px;
+  color:var(--oxblood); border:1px solid var(--oxblood); border-radius:8px; padding:0 5px; opacity:0.8; }
 .dot.ok { background:transparent; }
 
 .tl { margin-top:6px; }
@@ -176,7 +178,15 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
   function render() {
     var traces = visibleTraces();
     if (state.trace && !traces.some(function (t) { return t.id === state.trace; })) state.trace = null;
-    if (!state.trace && traces.length) state.trace = traces[0].id;
+    if (!state.trace && traces.length) {
+      // Default to the slowest trace that actually contains the localized
+      // cause, not the slowest trace overall. In a real window the slowest
+      // trace is often a long-lived streaming span with nothing to do with
+      // the incident, and opening the report on one of those illustrates the
+      // wrong request.
+      var withCause = traces.filter(function (t) { return t.hasCause; });
+      state.trace = (withCause.length ? withCause[0] : traces[0]).id;
+    }
 
     app.innerHTML =
       header() +
@@ -233,7 +243,8 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
     if (!traces.length) return '<p class="label">Traces</p><p class="empty">No trace matches these filters.</p>';
     var rows = traces.slice(0, 200).map(function (t) {
       return '<tr data-trace="' + esc(t.id) + '" aria-selected="' + (state.trace === t.id) + '">' +
-        '<td><span class="dot ' + (t.failed ? "" : "ok") + '"></span><span class="mono">' + esc(t.id.slice(0, 12)) + '</span></td>' +
+        '<td><span class="dot ' + (t.failed ? "" : "ok") + '"></span><span class="mono">' + esc(t.id.slice(0, 12)) + '</span>' +
+        (t.hasCause ? '<span class="cause-tag" title="contains the localized cause">cause</span>' : '') + '</td>' +
         '<td class="mono">' + esc(t.service) + '</td>' +
         '<td class="mono">' + esc(t.root) + '</td>' +
         '<td class="mono">' + ms(t.durMs) + '</td>' +

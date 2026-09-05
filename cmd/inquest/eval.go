@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/Grace/inquest/internal/eval"
@@ -18,6 +19,7 @@ func evalCmd(args []string) error {
 	manifest := fs.String("cases", "", "JSON manifest of labeled cases")
 	dir := fs.String("dir", "", "directory the manifest's file paths are relative to (default: the manifest's own directory)")
 	minSamples := fs.Int("min-samples", 20, "observations required in both windows to rank an operation")
+	exclude := fs.String("exclude", "", "comma-separated services to drop from the ranking; reported with the result")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -42,6 +44,13 @@ func evalCmd(args []string) error {
 
 	opt := localize.DefaultOptions()
 	opt.MinSamples = *minSamples
+	if *exclude != "" {
+		for _, s := range strings.Split(*exclude, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				opt.ExcludeServices = append(opt.ExcludeServices, s)
+			}
+		}
+	}
 
 	loader := func(p string) ([]*trace.Trace, error) {
 		if !filepath.IsAbs(p) {
@@ -54,7 +63,7 @@ func evalCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	printSummary(sum)
+	printSummary(sum, opt.ExcludeServices)
 
 	// A run in which inquest confidently named the wrong service is a failing
 	// run, whatever the hit rate was. Exiting non-zero makes that impossible
@@ -65,7 +74,7 @@ func evalCmd(args []string) error {
 	return nil
 }
 
-func printSummary(s eval.Summary) {
+func printSummary(s eval.Summary, excluded []string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "CASE\tOUTCOME\tRANK\tINQUEST SAID\tEXPECTED")
 	for _, r := range s.Results {
@@ -83,6 +92,11 @@ func printSummary(s eval.Summary) {
 
 	fmt.Printf("\n%d cases · top-1 %.0f%% · top-3 %.0f%% · wrong %.0f%% · declined %.0f%%\n",
 		s.Total, 100*s.Top1(), 100*s.Top3Rate(), 100*s.WrongRate(), 100*s.DeclineRate())
+	if len(excluded) > 0 {
+		fmt.Printf("excluded from every ranking: %s\n", strings.Join(excluded, ", "))
+	} else {
+		fmt.Println("nothing excluded — every operation in the traces was ranked.")
+	}
 	fmt.Println("\nwrong = named a service that was not responsible. declined = said nothing explains this.")
 	fmt.Println("They are reported separately on purpose: a localizer that is quiet when unsure is")
 	fmt.Println("usable, and one that is confidently wrong is not, and both look the same in a hit rate.")

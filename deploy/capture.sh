@@ -42,11 +42,21 @@ echo "capture: collecting ${secs}s into $out (from byte $start)" >&2
 sleep "$secs"
 sleep 3  # let the batch processor flush the tail of the window
 
-# +N is 1-based, so start+1 is the first byte after the mark. The final line
-# may be half-written when the collector is mid-flush, so drop any trailing
-# line that is not complete JSON.
+# +N is 1-based, so start+1 is the first byte after the mark. Both ends of the
+# window can land mid-line: the mark is a byte offset taken while the collector
+# may be mid-write, and the last line may be half-flushed when the window
+# closes. Drop a first line that does not begin a JSON object and a last line
+# that does not end one. Everything between them is whole.
 tail -c "+$((start + 1))" "$src" \
-  | awk 'BEGIN{prev=""} {if (prev != "") print prev; prev=$0} END{if (prev ~ /}[[:space:]]*$/) print prev}' \
+  | awk '
+      BEGIN { prev = ""; first = 1 }
+      {
+        if (first) { first = 0; if ($0 !~ /^[[:space:]]*\{/) next }
+        if (prev != "") print prev
+        prev = $0
+      }
+      END { if (prev ~ /\}[[:space:]]*$/) print prev }
+    ' \
   > "$out"
 
 lines=$(wc -l < "$out" | tr -d ' ')

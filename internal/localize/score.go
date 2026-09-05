@@ -70,6 +70,17 @@ type Options struct {
 	// cause. This is what makes "no code change explains this" a real answer
 	// rather than a thing the README promises.
 	ReportThreshold float64
+
+	// ExcludeServices are services removed from the ranking entirely.
+	//
+	// This exists for instrumentation that is not part of the system being
+	// diagnosed — a load generator's own spans are the test harness, and
+	// letting them rank means the harness can outscore the service that
+	// broke. It is a judgment call and a place to hide a bad number, so
+	// Result carries the list back out and every published figure has to say
+	// what was excluded. Empty by default: nothing is dropped unless someone
+	// says so.
+	ExcludeServices []string
 }
 
 // waitingShare is how much of an operation's slowdown its own work has to
@@ -97,6 +108,13 @@ func DefaultOptions() Options {
 type Result struct {
 	Candidates []Candidate
 
+	// Excluded is the services dropped before ranking, echoed back so a
+	// caller reporting an accuracy number cannot omit them by accident.
+	Excluded []string
+
+	// ExcludedOps counts the operations those services accounted for.
+	ExcludedOps int
+
 	// Localized is false when nothing cleared ReportThreshold. The candidate
 	// list is still returned — an on-call engineer wants to see the near
 	// misses — but the answer is "no operation in this window explains it."
@@ -111,7 +129,18 @@ func Localize(baseline, incident map[trace.Operation]*Profile, opt Options) Resu
 	var res Result
 	var cands []Candidate
 
+	excluded := make(map[string]bool, len(opt.ExcludeServices))
+	for _, s := range opt.ExcludeServices {
+		excluded[s] = true
+	}
+	res.Excluded = append([]string(nil), opt.ExcludeServices...)
+	sort.Strings(res.Excluded)
+
 	for op, inc := range incident {
+		if excluded[op.Service] {
+			res.ExcludedOps++
+			continue
+		}
 		base, hadBaseline := baseline[op]
 
 		if !hadBaseline {

@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/Grace/inquest/internal/localize"
 	"github.com/Grace/inquest/internal/report"
@@ -65,6 +67,8 @@ func localizeCmd(args []string) error {
 	out := fs.String("out", "report.html", "where to write the report")
 	minSamples := fs.Int("min-samples", 20, "observations required in both windows to rank an operation")
 	maxTraces := fs.Int("max-traces", 300, "traces embedded in the report, slowest first")
+	exclude := fs.String("exclude", "", "comma-separated services to drop from the ranking")
+	top := fs.Int("top", 0, "also print the top N candidates and their arithmetic, including near misses when inquest declines")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -83,9 +87,16 @@ func localizeCmd(args []string) error {
 
 	opt := localize.DefaultOptions()
 	opt.MinSamples = *minSamples
+	if *exclude != "" {
+		for _, s := range strings.Split(*exclude, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				opt.ExcludeServices = append(opt.ExcludeServices, s)
+			}
+		}
+	}
 
 	window := fmt.Sprintf("%s → %s", filepath.Base(*basePath), filepath.Base(*incPath))
-	return emit(baseline, incident, opt, window, *out, *maxTraces)
+	return emit(baseline, incident, opt, window, *out, *maxTraces, *top)
 }
 
 func load(path string) ([]*trace.Trace, error) {
@@ -105,7 +116,7 @@ func load(path string) ([]*trace.Trace, error) {
 	return trace.Assemble(spans), nil
 }
 
-func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out string, maxTraces int) error {
+func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out string, maxTraces, top int) error {
 	res := localize.Localize(
 		localize.ProfileWindow(baseline),
 		localize.ProfileWindow(incident),
@@ -132,6 +143,41 @@ func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out s
 		fmt.Fprintf(os.Stderr, "no operation cleared the reporting threshold (%d ranked, %d skipped)\n",
 			res.Considered, res.Skipped)
 	}
+	if top > 0 {
+		printTop(res, top)
+	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", out)
 	return nil
+}
+
+// printTop shows the ranking itself, not just its winner.
+//
+// A decline is only trustworthy if you can see what it declined on. Without
+// this, "no operation cleared the reporting threshold" is indistinguishable
+// from a bug in the parser, and the near misses are the first thing an
+// on-call engineer wants when the tool says nothing.
+func printTop(res localize.Result, n int) {
+	if n > len(res.Candidates) {
+		n = len(res.Candidates)
+	}
+	fmt.Fprintf(os.Stderr, "\n%-52s %-28s %8s %10s %10s %8s\n",
+		"OPERATION", "VERDICT", "SCORE", "SELF", "DURATION", "ERR")
+	for _, c := range res.Candidates[:n] {
+		fmt.Fprintf(os.Stderr, "%-52.52s %-28s %8.2f %10s %10s %7.1f%%\n",
+			c.Op.String(), c.Verdict, c.Score,
+			shortDur(c.SelfTimeShift), shortDur(c.DurationShift),
+			100*c.ErrorRateShift)
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+func shortDur(d time.Duration) string {
+	if d == 0 {
+		return "0"
+	}
+	sign := "+"
+	if d < 0 {
+		sign, d = "-", -d
+	}
+	return sign + d.Round(time.Microsecond).String()
 }

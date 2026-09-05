@@ -210,3 +210,44 @@ func TestACallerWithItsOwnNoiseIsStillAWaiter(t *testing.T) {
 		}
 	}
 }
+
+// Excluding a service is a judgment call and therefore a place to hide a bad
+// number. Result has to carry the list back out so a published figure cannot
+// omit it by accident.
+func TestExcludedServicesAreDroppedAndReportedBack(t *testing.T) {
+	baseline := chain(50, 10*time.Millisecond, 5*time.Millisecond, false)
+	incident := chain(50, 200*time.Millisecond, 5*time.Millisecond, false)
+
+	opt := DefaultOptions()
+	opt.ExcludeServices = []string{"postgres"}
+	res := Localize(ProfileWindow(baseline), ProfileWindow(incident), opt)
+
+	for _, c := range res.Candidates {
+		if c.Op.Service == "postgres" {
+			t.Fatalf("postgres was excluded but still ranked at %v", c.Score)
+		}
+	}
+	if res.ExcludedOps == 0 {
+		t.Error("ExcludedOps = 0; the exclusion dropped nothing")
+	}
+	if len(res.Excluded) != 1 || res.Excluded[0] != "postgres" {
+		t.Errorf("Excluded = %v, want [postgres] echoed back", res.Excluded)
+	}
+	// With the real cause removed, the remaining operations are all waiters,
+	// so inquest should decline rather than promote one of them.
+	if res.Localized {
+		t.Errorf("localized %s after the cause was excluded", res.Candidates[0].Op)
+	}
+}
+
+func TestNothingIsExcludedByDefault(t *testing.T) {
+	res := Localize(
+		ProfileWindow(chain(50, 10*time.Millisecond, 5*time.Millisecond, false)),
+		ProfileWindow(chain(50, 200*time.Millisecond, 5*time.Millisecond, false)),
+		DefaultOptions(),
+	)
+	if res.ExcludedOps != 0 || len(res.Excluded) != 0 {
+		t.Errorf("default options excluded %d ops (%v); nothing should be dropped unless asked",
+			res.ExcludedOps, res.Excluded)
+	}
+}

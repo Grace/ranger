@@ -33,7 +33,7 @@ func demoCmd(args []string) error {
 
 	fmt.Fprintln(os.Stderr, "demo: postgres 'SELECT items' slowed 12ms → 190ms; everything above it waits on that")
 	return emit(baseline, incident, localize.DefaultOptions(),
-		fmt.Sprintf("synthetic demo · %d traces per window", *traces), *out, 300)
+		fmt.Sprintf("synthetic demo · %d traces per window", *traces), *out, 300, 0)
 }
 
 // synth builds a small storefront: a frontend entry point that fans out to
