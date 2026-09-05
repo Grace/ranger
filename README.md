@@ -22,8 +22,11 @@ Two properties follow, and neither is available to an LLM-first design:
 
 ## Status
 
-Pre-alpha. The localizer works and has been run once against a real incident;
-there is no accuracy number yet.
+Pre-alpha. Scored against four labeled failures in the OpenTelemetry Demo:
+**top-1 25%, and it names the wrong service in a quarter to a half of cases
+depending on the ranking mode.** See [Accuracy](#accuracy), which also describes
+a drift confound in the harness large enough that the number should be read as a
+floor on the error rate rather than an estimate of it.
 
 `inquest localize` reads two windows of OTLP/JSON from the OpenTelemetry
 Collector's file exporter, ranks operations, and writes a self-contained HTML
