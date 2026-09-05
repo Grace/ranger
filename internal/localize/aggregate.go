@@ -20,6 +20,12 @@ type Sample struct {
 	Duration time.Duration
 	Depth    int
 	Failed   bool
+
+	// Children is how many instrumented children this span had. A span with
+	// none has self time equal to its duration by construction, which makes
+	// it structurally incapable of being called a waiter no matter what
+	// happened underneath it — the work below it simply was not traced.
+	Children int
 }
 
 // Profile is everything inquest knows about one operation in one window.
@@ -48,6 +54,14 @@ type Profile struct {
 	// better answer, because the caller's shift is at least partly the
 	// callee's.
 	MedianDepth int
+
+	// MedianChildren is how many instrumented children the operation usually
+	// has. Zero means self time carries no information: it equals duration by
+	// construction, so the operation always looks like its own cause. Browser
+	// page-load timings and load-generator spans are the common case, and
+	// they outrank real backend causes because their absolute shifts are
+	// larger by orders of magnitude.
+	MedianChildren float64
 }
 
 // Profile aggregates traces into one profile per operation.
@@ -62,6 +76,7 @@ func ProfileWindow(traces []*trace.Trace) map[trace.Operation]*Profile {
 				Duration: s.Duration(),
 				Depth:    t.Depth(id),
 				Failed:   s.Failed(),
+				Children: t.ChildCount(id),
 			})
 		}
 	}
@@ -77,11 +92,13 @@ func summarize(op trace.Operation, ss []Sample) *Profile {
 	times := make([]time.Duration, 0, len(ss))
 	durs := make([]time.Duration, 0, len(ss))
 	depths := make([]int, 0, len(ss))
+	kids := make([]int, 0, len(ss))
 	failures := 0
 	for _, s := range ss {
 		times = append(times, s.SelfTime)
 		durs = append(durs, s.Duration)
 		depths = append(depths, s.Depth)
+		kids = append(kids, s.Children)
 		if s.Failed {
 			failures++
 		}
@@ -89,6 +106,7 @@ func summarize(op trace.Operation, ss []Sample) *Profile {
 	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 	sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
 	sort.Ints(depths)
+	sort.Ints(kids)
 
 	med := quantile(times, 0.5)
 	return &Profile{
@@ -101,6 +119,7 @@ func summarize(op trace.Operation, ss []Sample) *Profile {
 		Failures:       failures,
 		ErrorRate:      float64(failures) / float64(len(ss)),
 		MedianDepth:    depths[len(depths)/2],
+		MedianChildren: float64(kids[len(kids)/2]),
 	}
 }
 

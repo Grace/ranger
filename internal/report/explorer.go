@@ -21,6 +21,16 @@ type Explorer struct {
 	Ranking    []ExpRank     `json:"ranking"`
 	Localized  bool          `json:"localized"`
 	Culprit    string        `json:"culprit"`
+	// CauseTraces is how many of the embedded traces actually pass through the
+	// localized operation. It is the denominator for "is this window even
+	// about the thing inquest named."
+	CauseTraces int `json:"causeTraces"`
+
+	// RankBy is the scoring mode the ranking was produced with. The page shows
+	// the number it actually sorted by; without this it displayed a robust-z
+	// beside a list ordered by effect size, which reads as a sorting bug.
+	RankBy string `json:"rankBy"`
+
 	Considered int           `json:"considered"`
 	Skipped    int           `json:"skipped"`
 	Ops        []ExpOpDetail `json:"ops"`
@@ -60,6 +70,8 @@ type ExpRank struct {
 	SelfShift float64 `json:"selfShiftMs"`
 	DurShift  float64 `json:"durShiftMs"`
 	Z         float64 `json:"z"`
+	Rel       float64 `json:"rel"` // self-time shift as a fraction of its own baseline
+	Kids      float64 `json:"kids"`
 	ErrShift  float64 `json:"errShift"`
 	BaseSelf  float64 `json:"baseSelfMs"`
 	IncSelf   float64 `json:"incSelfMs"`
@@ -84,7 +96,10 @@ type ExpOpDetail struct {
 // thousands, and a 200MB HTML file helps nobody; the cap is applied after
 // sorting so the traces kept are the slowest, which are the ones anyone opens
 // the page to look at.
-func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, window string, maxTraces int) Explorer {
+func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, window string, maxTraces int, rankBy localize.Ranking) Explorer {
+	if rankBy == "" {
+		rankBy = localize.ByDeviation
+	}
 	var culprit trace.Operation
 	if res.Localized {
 		culprit = res.Candidates[0].Op
@@ -96,6 +111,7 @@ func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, windo
 		Localized:  res.Localized,
 		Considered: res.Considered,
 		Skipped:    res.Skipped,
+		RankBy:     string(rankBy),
 	}
 	if res.Localized {
 		e.Culprit = culprit.String()
@@ -113,9 +129,18 @@ func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, windo
 		e.Traces = append(e.Traces, et)
 	}
 
-	// Slowest first: that is the order someone exploring an incident wants,
-	// and it makes the cap keep the interesting end.
+	// Traces through the cause first, then slowest.
+	//
+	// Duration alone is the wrong order and it was actively harmful: the
+	// longest traces in a window are long-lived streaming spans — a flagd
+	// event stream open for the full ten minutes — which have nothing to do
+	// with the incident and are guaranteed to sit at the top. Worse, the cap
+	// below is applied after this sort, so ordering by duration could drop
+	// every trace containing the cause before anyone saw one.
 	sort.Slice(e.Traces, func(i, j int) bool {
+		if e.Traces[i].HasCause != e.Traces[j].HasCause {
+			return e.Traces[i].HasCause
+		}
 		if e.Traces[i].DurMS != e.Traces[j].DurMS {
 			return e.Traces[i].DurMS > e.Traces[j].DurMS
 		}
@@ -123,6 +148,11 @@ func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, windo
 	})
 	if maxTraces > 0 && len(e.Traces) > maxTraces {
 		e.Traces = e.Traces[:maxTraces]
+	}
+	for _, t := range e.Traces {
+		if t.HasCause {
+			e.CauseTraces++
+		}
 	}
 
 	for s := range services {
@@ -138,10 +168,12 @@ func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, windo
 			SelfShift: ms(c.SelfTimeShift),
 			DurShift:  ms(c.DurationShift),
 			Z:         round(c.SelfTimeZ, 2),
+			Rel:       round(c.RelativeShift, 3),
 			ErrShift:  round(c.ErrorRateShift, 4),
 			IncSelf:   ms(c.Incident.MedianSelfTime),
 			IncDur:    ms(c.Incident.MedianDuration),
 			IncN:      c.Incident.Samples,
+			Kids:      c.Incident.MedianChildren,
 			Culprit:   res.Localized && c.Op == culprit,
 		}
 		if c.Baseline != nil {

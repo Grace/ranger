@@ -43,11 +43,35 @@ type Candidate struct {
 	SelfTimeZ      float64 // shift measured in baseline MADs
 	ErrorRateShift float64
 
+	// RelativeShift is the self-time shift as a fraction of the operation's
+	// own baseline: 1.0 means it doubled the work it does itself.
+	//
+	// SelfTimeZ and this measure different things and the difference decides
+	// rankings. A z says how surprising the shift is against that operation's
+	// own history; this says how much of a deal it is. They disagree hardest
+	// across tiers, where a browser timing moving 30% of a 3-second baseline
+	// dwarfs a gRPC handler tripling 3.5ms, and only one of those is a cause.
+	RelativeShift float64
+
 	Baseline *Profile
 	Incident *Profile
 
 	Depth int
 }
+
+// Ranking selects what an operation's score means.
+type Ranking string
+
+const (
+	// ByDeviation ranks on robust-z: how far the shift is outside the
+	// operation's own historical spread. This is a significance test.
+	ByDeviation Ranking = "deviation"
+
+	// ByEffect ranks on the shift as a fraction of the operation's own
+	// baseline. This is an effect size, and it is what survives comparison
+	// across tiers with wildly different absolute latencies.
+	ByEffect Ranking = "effect"
+)
 
 // Options tunes the thresholds. The defaults are deliberately conservative:
 // inquest would rather say nothing explains this than name the wrong service
@@ -70,6 +94,10 @@ type Options struct {
 	// cause. This is what makes "no code change explains this" a real answer
 	// rather than a thing the README promises.
 	ReportThreshold float64
+
+	// Rank selects significance or effect size as the score. Empty means
+	// ByDeviation, which is what inquest shipped first.
+	Rank Ranking
 
 	// ExcludeServices are services removed from the ranking entirely.
 	//
@@ -101,6 +129,24 @@ func DefaultOptions() Options {
 		MinErrorRateShift: 0.02,
 		ReportThreshold:   3.0,
 	}
+}
+
+// ApplyRanking sets the ranking mode and, unless a threshold was chosen
+// explicitly, the reporting threshold that goes with it.
+//
+// The two scores are not in the same units, so one threshold cannot serve
+// both. 3.0 deviations is a significance bar. 1.0 in effect terms means the
+// operation doubled its own work, which is the point at which "this operation
+// got slower" stops being arguable.
+func (o Options) ApplyRanking(r Ranking, explicit bool, threshold float64) Options {
+	o.Rank = r
+	switch {
+	case explicit:
+		o.ReportThreshold = threshold
+	case r == ByEffect:
+		o.ReportThreshold = 1.0
+	}
+	return o
 }
 
 // Result is a complete localization: the ranking, and whether inquest is
@@ -179,6 +225,9 @@ func Localize(baseline, incident map[trace.Operation]*Profile, opt Options) Resu
 			Depth:          inc.MedianDepth,
 		}
 		c.SelfTimeZ = robustZ(selfShift, base.MADSelfTime, opt.MinSelfTimeShift)
+		if base.MedianSelfTime > 0 {
+			c.RelativeShift = float64(selfShift) / float64(base.MedianSelfTime)
+		}
 		c.Verdict, c.Score = classify(c, opt)
 		cands = append(cands, c)
 	}
@@ -229,9 +278,17 @@ func classify(c Candidate, opt Options) (Verdict, float64) {
 	waiting := c.DurationShift >= opt.MinSelfTimeShift &&
 		float64(max(c.SelfTimeShift, 0)) < waitingShare*float64(c.DurationShift)
 
+	// Significance still gates: an operation has to have moved outside its own
+	// noise before its effect size means anything. Only the magnitude that
+	// gets reported changes.
+	mag := c.SelfTimeZ
+	if opt.Rank == ByEffect {
+		mag = c.RelativeShift
+	}
+
 	switch {
 	case errMoved && selfMoved && !waiting:
-		return Failing, c.SelfTimeZ + 10*c.ErrorRateShift
+		return Failing, mag + 10*c.ErrorRateShift
 	case errMoved && !waiting:
 		return Failing, 10 * c.ErrorRateShift
 	case waiting:
@@ -240,7 +297,7 @@ func classify(c Candidate, opt Options) (Verdict, float64) {
 		// cause, which is what an on-call engineer is actually holding.
 		return WaitingOnSomethingBelow, 0
 	case selfMoved:
-		return Slower, c.SelfTimeZ
+		return Slower, mag
 	default:
 		return Slower, 0
 	}

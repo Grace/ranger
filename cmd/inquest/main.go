@@ -68,6 +68,8 @@ func localizeCmd(args []string) error {
 	minSamples := fs.Int("min-samples", 20, "observations required in both windows to rank an operation")
 	maxTraces := fs.Int("max-traces", 300, "traces embedded in the report, slowest first")
 	exclude := fs.String("exclude", "", "comma-separated services to drop from the ranking")
+	rank := fs.String("rank", "deviation", "how to score: deviation (robust-z, how surprising) or effect (share of the operation's own baseline)")
+	threshold := fs.Float64("threshold", -1, "override the reporting threshold; default 3.0 for deviation, 1.0 for effect")
 	top := fs.Int("top", 0, "also print the top N candidates and their arithmetic, including near misses when inquest declines")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -87,6 +89,10 @@ func localizeCmd(args []string) error {
 
 	opt := localize.DefaultOptions()
 	opt.MinSamples = *minSamples
+	opt = opt.ApplyRanking(localize.Ranking(*rank), *threshold >= 0, *threshold)
+	if opt.Rank != localize.ByDeviation && opt.Rank != localize.ByEffect {
+		return fmt.Errorf("-rank must be deviation or effect, got %q", *rank)
+	}
 	if *exclude != "" {
 		for _, s := range strings.Split(*exclude, ",") {
 			if s = strings.TrimSpace(s); s != "" {
@@ -129,7 +135,7 @@ func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out s
 	}
 	defer f.Close()
 
-	if err := report.Render(f, report.BuildExplorer(res, baseline, incident, window, maxTraces)); err != nil {
+	if err := report.Render(f, report.BuildExplorer(res, baseline, incident, window, maxTraces, opt.Rank)); err != nil {
 		return err
 	}
 
@@ -160,13 +166,25 @@ func printTop(res localize.Result, n int) {
 	if n > len(res.Candidates) {
 		n = len(res.Candidates)
 	}
-	fmt.Fprintf(os.Stderr, "\n%-52s %-28s %8s %10s %10s %8s\n",
-		"OPERATION", "VERDICT", "SCORE", "SELF", "DURATION", "ERR")
+	fmt.Fprintf(os.Stderr, "\n%-46s %-8s %7s %10s %10s %9s %7s %6s\n",
+		"OPERATION", "VERDICT", "SCORE", "SELF", "DURATION", "BASE-SELF", "REL", "KIDS")
 	for _, c := range res.Candidates[:n] {
-		fmt.Fprintf(os.Stderr, "%-52.52s %-28s %8.2f %10s %10s %7.1f%%\n",
+		var baseSelf time.Duration
+		if c.Baseline != nil {
+			baseSelf = c.Baseline.MedianSelfTime
+		}
+		rel := 0.0
+		if baseSelf > 0 {
+			rel = float64(c.SelfTimeShift) / float64(baseSelf)
+		}
+		kids := 0.0
+		if c.Incident != nil {
+			kids = c.Incident.MedianChildren
+		}
+		fmt.Fprintf(os.Stderr, "%-46.46s %-8.8s %7.2f %10s %10s %9s %6.0f%% %6.1f\n",
 			c.Op.String(), c.Verdict, c.Score,
 			shortDur(c.SelfTimeShift), shortDur(c.DurationShift),
-			100*c.ErrorRateShift)
+			shortDur(baseSelf), 100*rel, kids)
 	}
 	fmt.Fprintln(os.Stderr)
 }

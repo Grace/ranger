@@ -19,6 +19,8 @@ func evalCmd(args []string) error {
 	manifest := fs.String("cases", "", "JSON manifest of labeled cases")
 	dir := fs.String("dir", "", "directory the manifest's file paths are relative to (default: the manifest's own directory)")
 	minSamples := fs.Int("min-samples", 20, "observations required in both windows to rank an operation")
+	rank := fs.String("rank", "deviation", "how to score: deviation (robust-z) or effect (share of the operation's own baseline)")
+	threshold := fs.Float64("threshold", -1, "override the reporting threshold; default 3.0 for deviation, 1.0 for effect")
 	exclude := fs.String("exclude", "", "comma-separated services to drop from the ranking; reported with the result")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -44,6 +46,10 @@ func evalCmd(args []string) error {
 
 	opt := localize.DefaultOptions()
 	opt.MinSamples = *minSamples
+	opt = opt.ApplyRanking(localize.Ranking(*rank), *threshold >= 0, *threshold)
+	if opt.Rank != localize.ByDeviation && opt.Rank != localize.ByEffect {
+		return fmt.Errorf("-rank must be deviation or effect, got %q", *rank)
+	}
 	if *exclude != "" {
 		for _, s := range strings.Split(*exclude, ",") {
 			if s = strings.TrimSpace(s); s != "" {
@@ -63,6 +69,7 @@ func evalCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("ranked by %s, reporting threshold %.2f\n\n", opt.Rank, opt.ReportThreshold)
 	printSummary(sum, opt.ExcludeServices)
 
 	// A run in which inquest confidently named the wrong service is a failing

@@ -126,6 +126,14 @@ func sortSpans(ss []*Span) {
 // Children returns the direct children of a span, in start order.
 func (t *Trace) Children(spanID string) []*Span { return t.children[spanID] }
 
+// ChildCount is how many instrumented children a span has.
+//
+// It is the caveat that belongs next to every self time. Self time is only
+// meaningful relative to what was traced underneath: a span with no children
+// has self time equal to its duration whether it did the work itself or spent
+// the whole time blocked on something nobody instrumented.
+func (t *Trace) ChildCount(spanID string) int { return len(t.children[spanID]) }
+
 // Roots returns the spans with no parent in this trace, in start order.
 func (t *Trace) Roots() []*Span { return t.roots }
 

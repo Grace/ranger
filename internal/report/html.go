@@ -106,6 +106,14 @@ table.traces tr { cursor:pointer; }
 table.traces tr:hover td { background:var(--panel); }
 table.traces tr[aria-selected="true"] td { background:var(--panel); box-shadow:inset 3px 0 0 var(--own); }
 .dot { display:inline-block; width:6px; height:6px; border-radius:50%%; background:var(--oxblood); margin-right:6px; }
+.chip.cause-only[aria-pressed="true"] { border-color:var(--oxblood); color:var(--oxblood); font-weight:600; }
+.vline { display:flex; align-items:baseline; gap:6px; margin-top:1px; }
+.vline .v { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vline .lead { margin-left:auto; white-space:nowrap; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
+.vline .kid { flex:none; font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
+  border:1px solid currentColor; border-radius:7px; padding:0 4px; opacity:0.45; cursor:help; }
+.nums .dim { opacity:0.5; }
+.label .sub { font-weight:400; text-transform:none; letter-spacing:0; opacity:0.65; }
 .cause-tag { margin-left:7px; font-size:9px; text-transform:uppercase; letter-spacing:0.6px;
   color:var(--oxblood); border:1px solid var(--oxblood); border-radius:8px; padding:0 5px; opacity:0.8; }
 .dot.ok { background:transparent; }
@@ -151,6 +159,11 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
 
   var state = { trace: null, span: null, opFilter: null, services: {} };
   D.services.forEach(function (s) { state.services[s] = true; });
+  // Default to the traces that actually pass through the cause. A window holds
+  // thousands of traces and only some of them are about the incident; showing
+  // all of them sorted by duration puts ten-minute streaming spans on top and
+  // buries the request the report is about.
+  state.causeOnly = !!(D.localized && D.causeTraces);
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -164,9 +177,11 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
     return (v / 1000).toFixed(2) + "s";
   }
   function signed(v) { return (v >= 0 ? "+" : "−") + ms(Math.abs(v)); }
+  function relPct(v) { return (v >= 0 ? "+" : "−") + Math.round(Math.abs(v) * 100) + "%%"; }
 
   function visibleTraces() {
     return D.traces.filter(function (t) {
+      if (state.causeOnly && !t.hasCause) return false;
       if (!t.spans.some(function (s) { return state.services[s.service]; })) return false;
       if (state.opFilter) {
         return t.spans.some(function (s) { return s.service + " · " + s.name === state.opFilter; });
@@ -219,24 +234,40 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
 
   function ranking() {
     if (!D.ranking.length) return '<p class="label">Ranking</p><p class="empty">Nothing to rank.</p>';
-    return '<p class="label">Ranking</p>' + D.ranking.map(function (r) {
+    var effect = D.rankBy === "effect";
+    var head = '<p class="label">Ranking &mdash; by ' +
+      (effect
+        ? 'effect size <span class="sub">(self-time shift as a share of the operation\'s own baseline)</span>'
+        : 'deviation <span class="sub">(self-time shift in baseline MADs)</span>') + '</p>';
+    return head + D.ranking.map(function (r) {
       var cls = "rank" + (r.culprit ? " culprit" : "") +
         (r.verdict.indexOf("waiting") === 0 ? " waiting" : "");
       return '<div class="' + cls + '" data-op="' + esc(r.op) + '" role="button" tabindex="0" ' +
         'aria-pressed="' + (state.opFilter === r.op) + '">' +
         '<div class="op">' + esc(r.op) + '</div>' +
-        '<div class="v">' + esc(r.verdict) + '</div>' +
+        '<div class="vline"><span class="v">' + esc(r.verdict) + '</span>' +
+        (r.kids === 0
+          ? '<span class="kid" title="No instrumented children, so self time equals duration by construction — this operation cannot be told apart from a cause.">leaf</span>'
+          : '') +
+        '<span class="lead">' + (effect ? relPct(r.rel) + ' own work' : 'z ' + r.z.toFixed(1)) + '</span></div>' +
         '<div class="nums"><span>self <b>' + signed(r.selfShiftMs) + '</b></span>' +
         '<span>dur ' + signed(r.durShiftMs) + '</span>' +
-        '<span>z ' + r.z.toFixed(1) + '</span></div></div>';
+        (effect ? '<span class="dim">z ' + r.z.toFixed(1) + '</span>' : '') +
+        '</div></div>';
     }).join("");
   }
 
   function services() {
-    return '<p class="label">Services</p><div class="chips">' + D.services.map(function (s) {
+    var chips = D.services.map(function (s) {
       return '<button class="chip" data-svc="' + esc(s) + '" aria-pressed="' + !!state.services[s] + '">' +
         esc(s) + '</button>';
-    }).join("") + '</div>';
+    }).join("");
+    var only = "";
+    if (D.localized && D.causeTraces) {
+      only = '<button class="chip cause-only" data-causeonly="1" aria-pressed="' + !!state.causeOnly + '">' +
+        'only through the cause (' + D.causeTraces + ')</button>';
+    }
+    return '<p class="label">Services</p><div class="chips">' + only + chips + '</div>';
   }
 
   function traceTable(traces) {
@@ -250,7 +281,8 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
         '<td class="mono">' + ms(t.durMs) + '</td>' +
         '<td class="mono">' + t.spans.length + '</td></tr>';
     }).join("");
-    return '<p class="label">Traces &mdash; ' + traces.length + ' matching, slowest first</p>' +
+    return '<p class="label">Traces &mdash; ' + traces.length +
+      (state.causeOnly ? ' through the cause' : ' matching') + ', slowest first</p>' +
       '<div class="tracewrap"><table class="traces">' +
       '<thead><tr><th>trace</th><th>entry service</th><th>root span</th><th>duration</th><th>spans</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div>';
@@ -355,6 +387,13 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
     app.querySelectorAll("[data-svc]").forEach(function (el) {
       el.addEventListener("click", function () {
         state.services[el.dataset.svc] = !state.services[el.dataset.svc];
+        render();
+      });
+    });
+    app.querySelectorAll("[data-causeonly]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        state.causeOnly = !state.causeOnly;
+        state.trace = null;
         render();
       });
     });
