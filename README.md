@@ -40,10 +40,18 @@ What has been run, once, on opentelemetry-demo `8c47d47`:
 
 | flag | expected | inquest said | |
 | --- | --- | --- | --- |
-| `adManualGc` | `ad` | `ad · oteldemo.AdService/GetAds` — self time 6.96ms → 1.89s, z 410 | correct |
+| `adManualGc` | `ad` | `ad · oteldemo.AdService/GetAds` — self time 6.963ms → 1893.08ms, z 409.99 | correct |
 
-The runner-up scored 0.5, so the margin was not close. One case is an anecdote.
+The runner-up scored 0.52, so the margin was not close. One case is an anecdote.
 `deploy/README.md` is how the rest get produced.
+
+**Caveat on that row.** The capture files behind it were deleted, and two later
+attempts to rerun the window produced no injection at all — the demo's
+`adManualGc` flag logged zero collections in the ad service both times. The full
+ranking survives in [`evidence/adManualGc-ranking.json`](evidence/adManualGc-ranking.json),
+recovered from the generated report, so the figures are checkable; they are not
+reproducible from raw spans. Treat it as a record of a measurement, not as a
+result that has been confirmed twice.
 
 ### What that one case already taught
 
