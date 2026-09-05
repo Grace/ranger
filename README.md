@@ -32,40 +32,120 @@ the runbook for producing those windows from the OpenTelemetry Demo.
 
 ## Accuracy
 
-The point of this project is a published, reproducible accuracy number against
-labeled failures. **That number does not exist yet, so treat any claim about
-localization quality as unsupported.**
+Against the OpenTelemetry Demo at commit `8c47d47`, four labeled failures, one
+300-second baseline and one 300-second window per case, `min-samples 20`.
 
-What has been run, once, on opentelemetry-demo `8c47d47`:
+| | top-1 | top-3 | wrong | declined |
+| --- | --- | --- | --- | --- |
+| `-rank deviation` | 25% | 25% | **50%** | 25% |
+| `-rank deviation -exclude load-generator` | 25% | 25% | **50%** | 25% |
+| `-rank effect` | 25% | 50% | 25% | 25% |
+| `-rank effect -exclude load-generator` | 25% | 50% | 25% | 25% |
 
-| flag | expected | inquest said | |
+Four cases is not a benchmark. It is enough to say that inquest names the wrong
+service more often than the right one, and that is the number to carry.
+
+Per case, under `-rank effect`:
+
+| case | injection verified | outcome | rank of the responsible service |
 | --- | --- | --- | --- |
-| `adManualGc` | `ad` | `ad · oteldemo.AdService/GetAds` — self time 6.963ms → 1893.08ms, z 409.99 | correct |
+| `adManualGc` | yes — GetAds p50 4.33ms → 2124.12ms | **correct** | 1 |
+| `recommendationCacheFailure` | yes — 185 error spans | in top 3 | 2 |
+| `adHighCpu` | yes — GetAds p50 4.33ms → 7.81ms | declined | 5 |
+| `productCatalogFailure` | yes — 1087 error spans | **wrong** | 7 |
 
-The runner-up scored 0.52, so the margin was not close. One case is an anecdote.
-`deploy/README.md` is how the rest get produced.
+### The confound, which is larger than the result
 
-**Caveat on that row.** The capture files behind it were deleted, and two later
-attempts to rerun the window produced no injection at all — the demo's
-`adManualGc` flag logged zero collections in the ad service both times. The full
-ranking survives in [`evidence/adManualGc-ranking.json`](evidence/adManualGc-ranking.json),
-recovered from the generated report, so the figures are checkable; they are not
-reproducible from raw spans. Treat it as a record of a measurement, not as a
-result that has been confirmed twice.
+A single baseline was captured at the start of the run and compared against
+windows up to 32 minutes later. The ad service drifted over that span with
+nothing injected into it:
 
-### What that one case already taught
+```
+baseline                     GetAds p50   4.33ms
+adHighCpu                    GetAds p50   7.81ms   ← injected
+adManualGc                   GetAds p50 2124.12ms  ← injected
+productCatalogFailure        GetAds p50  11.19ms   ← ad untouched
+recommendationCacheFailure   GetAds p50  10.42ms   ← ad untouched
+```
 
-The frontend's client span for the same call moved **+1885.6ms in duration and
-+3.6ms in self time** — it was waiting, not slow. inquest called it *slower*,
-because the classifier tested an absolute floor before the proportion and 3.6ms
-clears any sane floor. Real traces are noisy in a way the synthetic tests were
-not. Waiting is now decided on proportion first, and the demo's own numbers are
-a regression test.
+The ad service ends the run roughly 2.5× slower than it began it. That drift is
+attributed to whichever flag happened to be on, which is why `ad · GetAds` tops
+the ranking in the `recommendationCacheFailure` window — a false positive
+manufactured by the harness, not by the ranking.
+
+**So the honest reading is that this measures the harness at least as much as it
+measures inquest.** The fix is interleaving a fresh baseline between injections
+rather than reusing one, and until that runs, the table above is a floor on the
+error rate and not an estimate of it.
+
+### The distinction the whole thing exists for
+
+`adManualGc` is the case that shows why this is done over the trace DAG rather
+than over a flat set of events. Both of these are the *same call* — the ad
+service's server span and the frontend's client span for it:
+
+```
+ad · oteldemo.AdService/GetAds          slower    self +2.096s   duration +2.098s
+frontend · oteldemo.AdService/GetAds    waiting   self +8.97ms   duration +2.125s
+```
+
+The caller's duration moved roughly 237× more than its own work did. On a
+duration ranking the two are indistinguishable and the caller may well sort
+higher; self time separates them, and the caller is scored zero and never
+promoted to an answer. Reproducible from `baseline.jsonl` and
+`incident-adManualGc.jsonl`.
+
+An earlier window measured the same effect at z 409.99 with a runner-up of 0.52.
+Its capture files were deleted, so the ranking was recovered from the report
+payload and checked in at
+[`evidence/adManualGc-ranking.json`](evidence/adManualGc-ranking.json) rather
+than quoted from nothing. The run above supersedes it and is reproducible; the
+artifact is kept because figures from that window appear in the write-up.
+
+### What the two ranking modes are
+
+`-rank deviation` scores an operation by robust-z: how far its self-time shift
+falls outside its own historical spread. That is a significance test, and
+inquest originally read it as importance. Across tiers those diverge badly — a
+load generator moving 30% of a 2.4-second baseline outscores a gRPC handler
+tripling 3.5ms — so `-rank effect` scores the shift as a fraction of the
+operation's own baseline instead, an effect size, with a threshold of 1.0 (the
+operation doubled its own work) in place of 3.0 deviations. Both keep the 2ms
+absolute floor, so a 40µs cache hit going to 200µs cannot be promoted by ratio
+alone.
+
+Effect-size ranking was designed while looking at one window and then measured
+on four, of which three were not examined first. It halves the wrong rate and
+doubles top-3 without moving top-1. That is a modest result on a small set, and
+the default is still `deviation` until a run without the drift confound says
+otherwise.
+
+### Excluding the load generator changes almost nothing
+
+It was worth checking, because a load generator's spans are the test harness
+rather than the system under test, and under deviation ranking they did reach
+ranks 2 and 3. But the headline numbers are identical with and without the
+exclusion in both modes. Every published figure states what was excluded, and
+`Result.Excluded` carries the list back out so a caller cannot omit it by
+accident.
+
+### Cases that are not in the set, and why
+
+`cartFailure` only fires inside `EmptyCart`, which sees roughly three calls a
+minute at demo load — 14 samples in the incident window against a floor of 20.
+It cannot clear `min-samples` in five minutes, so it was removed before scoring
+rather than kept as a guaranteed decline.
 
 `intlShippingSlowdown` looked like the cleanest case on paper and is not usable:
-it only delays non-US addresses, and one of the nine load-generator personas is
-Canadian. Roughly a tenth of an already-rare operation is affected, which is
-below the sample floor and a tail effect rather than a shift.
+it delays non-US addresses only, and one of the nine load-generator personas is
+Canadian. That is a tail effect on an already-rare operation, not a shift.
+
+`productCatalogFailure` could not fire at all until this run. The demo ships it
+with a targeting rule whose branches are **both** `"off"`, and a targeting rule
+overrides `defaultVariant` — so flipping the default, which is what the harness
+did, left the flag permanently disabled while appearing to work. An earlier
+scoring run counted it as a decline. That was the harness, and it is the reason
+every case now verifies its own injection and records the evidence.
 
 ## License
 
