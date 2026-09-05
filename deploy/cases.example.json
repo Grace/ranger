@@ -1,11 +1,58 @@
 [
   {
-    "name": "example — replace this entire file",
-    "flag": "READ src/flagd/demo.flagd.json IN YOUR DEMO CHECKOUT",
-    "expectService": "the service whose own work changed, not where the symptom appeared",
-    "expectOperation": "",
+    "name": "intlShippingSlowdown",
+    "flag": "intlShippingSlowdown",
+    "expectService": "shipping",
     "baselineFile": "baseline.jsonl",
-    "incidentFile": "incident-example.jsonl",
-    "notes": "Flag names differ between demo releases. Do not copy a flag list from documentation, including inquest's own — read the demo's flagd config and record what is actually there."
+    "incidentFile": "incident-intlShippingSlowdown.jsonl",
+    "notes": "Latency injected directly into shipping. The cleanest self-time case in the demo: checkout and frontend both slow down waiting on it, so it is also the clearest test of the waiting-vs-cause distinction. Shipping is low volume — use a long window."
+  },
+  {
+    "name": "adManualGc",
+    "flag": "adManualGc",
+    "expectService": "ad",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-adManualGc.jsonl",
+    "notes": "Full manual GC in the ad service. Pauses show up as the ad service's own work, which is what self time is supposed to catch."
+  },
+  {
+    "name": "adHighCpu",
+    "flag": "adHighCpu",
+    "expectService": "ad",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-adHighCpu.jsonl",
+    "notes": "CPU saturation in the ad service."
+  },
+  {
+    "name": "cartFailure",
+    "flag": "cartFailure",
+    "expectService": "cart",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-cartFailure.jsonl",
+    "notes": "Error-rate case rather than latency: exercises the Failing verdict."
+  },
+  {
+    "name": "paymentFailure",
+    "flag": "paymentFailure",
+    "expectService": "payment",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-paymentFailure.jsonl",
+    "notes": "Payment sits at the end of the checkout funnel and produced 4 spans in a 30s window here. Either capture long enough to clear min-samples or drop this case — a decline caused by thin sampling is not a finding about the localizer."
+  },
+  {
+    "name": "productCatalogFailure",
+    "flag": "productCatalogFailure",
+    "expectService": "product-catalog",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-productCatalogFailure.jsonl",
+    "notes": "Fails on one specific product, so the error rate moves less than the flag name suggests."
+  },
+  {
+    "name": "recommendationCacheFailure",
+    "flag": "recommendationCacheFailure",
+    "expectService": "recommendation",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-recommendationCacheFailure.jsonl",
+    "notes": "Cache failure degrades over time rather than stepping. A window captured too early may show nothing."
   }
 ]

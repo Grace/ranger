@@ -10,6 +10,13 @@
 set -euo pipefail
 
 secs=${1:?usage: capture.sh <seconds> <output.jsonl> [traces.jsonl]}
+
+# Under about five minutes the low-volume services — payment, shipping — do not
+# accumulate enough spans to clear min-samples, and their cases score as
+# "declined" for want of data rather than for anything inquest did.
+if (( secs < 300 )); then
+  echo "capture: warning: ${secs}s is short; payment and shipping may not reach min-samples" >&2
+fi
 out=${2:?usage: capture.sh <seconds> <output.jsonl> [traces.jsonl]}
 src=${3:-./inquest-traces/traces.jsonl}
 

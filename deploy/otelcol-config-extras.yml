@@ -1,32 +1,46 @@
-# Drop this into the OpenTelemetry Demo at
-# src/otel-collector/otelcol-config-extras.yml — the demo merges it into the
-# collector's own config, which is the supported extension point.
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
 #
-# GOTCHA, and it will cost you an hour if you miss it: the merge REPLACES
-# lists rather than appending to them. The exporters line below therefore has
-# to repeat the demo's own exporters, or you will silently turn off everything
-# except this one. Check the demo's otelcol-config.yml for the current list
-# before copying this — it changes between releases.
+# inquest: write every span to a file so a window can be captured and localized
+# offline. Copy to src/otel-collector/ in an opentelemetry-demo checkout.
+# See github.com/Grace/inquest/deploy/README.md.
+#
+# The collector merges config files but REPLACES arrays rather than appending,
+# so the traces pipeline below has to repeat the upstream exporters or it turns
+# them off. Upstream, for this checkout:
+#
+#   traces: otlp_grpc/jaeger, debug, span_metrics
+#
+# jaeger only exists when compose.observability.yaml is layered in. Running
+# without it, the base pipeline is [debug, span_metrics], which is what is
+# repeated here — add otlp_grpc/jaeger back if you bring observability up.
 
 exporters:
   file/inquest:
     path: /tmp/inquest/traces.jsonl
-    # Rotation off: a window is captured by truncating this file and waiting,
-    # and a rotated file would take half the window with it.
-    rotation:
-      max_megabytes: 0
-
-  # Optional. Point the same traces at Honeycomb so the exact incident inquest
-  # localizes can be opened in BubbleUp next to it. Needs HONEYCOMB_API_KEY in
-  # the demo's .env; the free tier is enough to send data, and none of what
-  # inquest does depends on it.
-  #
-  # otlp/honeycomb:
-  #   endpoint: "api.honeycomb.io:443"
-  #   headers:
-  #     "x-honeycomb-team": "${env:HONEYCOMB_API_KEY}"
 
 service:
   pipelines:
     traces:
-      exporters: [otlp, debug, spanmetrics, file/inquest]
+      exporters: [debug, span_metrics, file/inquest]
+
+    # The docker_stats receiver asks for Docker API 1.44; this daemon caps at
+    # 1.41, and the collector treats a receiver that cannot start as fatal —
+    # so it crash-loops and no traces reach the file at all. It is a metrics
+    # receiver and inquest only reads traces, so it is dropped here rather
+    # than worked around. Arrays are replaced, so this repeats the upstream
+    # metrics receivers minus that one.
+    metrics:
+      receivers: [http_check/frontend-proxy, host_metrics, nginx, otlp, redis, postgresql, prometheus/ad, span_metrics]
+
+# Optional: send the same spans to Honeycomb so the incident inquest localizes
+# can be opened in BubbleUp beside it. Add otlp/honeycomb to the traces
+# exporter list above rather than replacing what is there, and set
+# HONEYCOMB_API_KEY in the demo's .env. The free tier accepts data; reading it
+# back programmatically needs Enterprise, which is why inquest reads this file.
+#
+# exporters:
+#   otlp/honeycomb:
+#     endpoint: "api.honeycomb.io:443"
+#     headers:
+#       "x-honeycomb-team": "${env:HONEYCOMB_API_KEY}"

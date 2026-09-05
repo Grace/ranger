@@ -1,89 +1,139 @@
 # Running inquest against the OpenTelemetry Demo
 
-The point of this directory is an accuracy number produced from failures
-inquest did not author. `inquest demo` proves the plumbing works and nothing
-else — the generator picks the answer there, so finding it means nothing.
+`inquest demo` proves the plumbing works and nothing else — the generator picks
+the answer there, so finding it means nothing. This directory is how you get a
+number that counts: the [OpenTelemetry
+Demo](https://github.com/open-telemetry/opentelemetry-demo) ships feature flags
+that inject specific failures, so ground truth comes from the person who
+flipped the flag rather than from inquest.
 
-The [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo)
-ships feature flags that inject specific failures. Flip one and you know the
-right answer without inquest having any say in it. That is the entire reason
-to use it.
+Everything below was run against demo commit `8c47d47` on 2026-09-05.
 
 ## Before you start
 
-The demo pulls roughly 10–15 GB of images across ~20 services. Check you have
-the headroom:
-
-```
-df -h ~
-docker system df
-```
+The images are about 10 GB. `df -h ~` and `docker system df` before you pull.
 
 ## 1. Bring up the demo with a file exporter
 
 ```
-git clone https://github.com/open-telemetry/opentelemetry-demo.git
+git clone --depth 1 https://github.com/open-telemetry/opentelemetry-demo.git
 cd opentelemetry-demo
 mkdir -p inquest-traces
 cp /path/to/inquest/deploy/otelcol-config-extras.yml src/otel-collector/
-docker compose -f docker-compose.yml -f /path/to/inquest/deploy/docker-compose.override.yml up -d
+cp /path/to/inquest/deploy/compose.extras.yaml .
+docker compose -f compose.yaml -f compose.extras.yaml up -d
 ```
 
-**Read `otelcol-config-extras.yml` before you copy it.** The demo merges that
-file into the collector config, and the merge *replaces* lists rather than
-appending. The `exporters:` line has to repeat the demo's own exporters or you
-will silently turn everything else off. The current list is in
-`src/otel-collector/otelcol-config.yml`, and it changes between releases.
+`compose.extras.yaml` and `src/otel-collector/otelcol-config-extras.yml` are
+the demo's own extension seams — both ship as empty stubs meant to be
+overwritten, so nothing upstream is being patched.
 
-Confirm spans are landing:
+**The collector merges config files but replaces arrays rather than appending.**
+The traces pipeline in the extras file therefore repeats the upstream
+exporters. For this checkout they are `debug, span_metrics` running the base
+compose, plus `otlp_grpc/jaeger` if you layer in `compose.observability.yaml`.
+Check `src/otel-collector/otelcol-config.yml` before copying anything: the
+names changed from what older documentation says, and getting this wrong
+silently disables the demo's own exporters rather than erroring.
+
+### If the collector crash-loops
+
+The `docker_stats` receiver requests Docker API 1.44. Docker 20.10 caps at
+1.41, and the collector treats a receiver that cannot start as fatal, so it
+exits and **no traces reach the file at all**:
+
+```
+Error response from daemon: client version 1.44 is too new. Maximum supported API version is 1.41
+```
+
+The extras config here drops `docker_stats` from the metrics pipeline. It is a
+metrics receiver and inquest only reads traces, so nothing is lost. Upgrading
+Docker also fixes it.
+
+Confirm spans are landing before going further:
 
 ```
 wc -l inquest-traces/traces.jsonl
+docker ps --filter name=otel-collector --format '{{.Status}}'
 ```
 
 ## 2. Capture a baseline
 
-Let the load generator run for a few minutes so the system is warm, then:
+Let the load generator run a few minutes so the system is warm:
 
 ```
-/path/to/inquest/deploy/capture.sh 180 baseline.jsonl
+/path/to/inquest/deploy/capture.sh 300 baseline.jsonl
 ```
+
+**Window length is not a detail.** Load is very unevenly distributed across the
+demo. In one 30-second window here:
+
+| service | spans |
+| --- | --- |
+| frontend-proxy | 1734 |
+| product-catalog | 718 |
+| cart | 205 |
+| ad | 50 |
+| shipping | 23 |
+| payment | 4 |
+
+Browsing dominates; checkout is rare. An operation needs `-min-samples`
+observations in **both** windows to be ranked at all, so a short window makes
+`payment` and `shipping` cases score as `declined` for lack of data — which
+says nothing about the localizer and everything about the capture. Five
+minutes is a floor, not a target.
 
 ## 3. Inject one failure and capture the incident
 
-The demo's flags live in `src/flagd/demo.flagd.json`. **Read that file rather
-than trusting a list from anywhere else, this one included** — flag names have
-changed between demo releases, and a manifest that names a flag the demo does
-not have will produce a window where nothing happened and score as a decline.
+Flags live in `src/flagd/demo.flagd.json` and can be flipped in the flagd UI at
+`http://localhost:8080/feature`. **Read that file in your own checkout** — the
+names moved between demo releases, and a flag the demo does not have produces a
+window where nothing happened.
 
-Flip exactly one flag, wait for it to take effect, then:
+The 14 flags in this checkout:
 
 ```
-/path/to/inquest/deploy/capture.sh 180 incident-<flag>.jsonl
+adFailure  adHighCpu  adManualGc  cartFailure  emailMemoryLeak
+failedReadinessProbe  imageSlowLoad  intlShippingSlowdown  kafkaQueueProblems
+loadGeneratorFloodHomepage  paymentFailure  paymentUnreachable
+productCatalogFailure  recommendationCacheFailure
 ```
 
-Turn it back off before capturing the next one. Two flags at once produces a
-window with two causes, and neither the manifest nor the scoring has a way to
-express that.
+Flip exactly one, wait for it to take hold, then:
+
+```
+/path/to/inquest/deploy/capture.sh 300 incident-<flag>.jsonl
+```
+
+Turn it back off before the next one. Two flags at once produces a window with
+two causes and neither the manifest nor the scoring can express that.
+
+### Flags to leave out of the scored set
+
+- **`loadGeneratorFloodHomepage`** — more traffic, no service at fault. There is
+  no correct answer to score against. Worth running separately as a check that
+  inquest *declines*, which is the right behaviour.
+- **`kafkaQueueProblems`** — overloads the queue *and* delays the consumer, so
+  the blast radius covers two services.
+- **`failedReadinessProbe`**, **`imageSlowLoad`** — the symptom may not appear
+  as spans whose self time moves. Run them, but decide ground truth from what
+  the traces show, not from the flag name.
+
+Excluding an ambiguous case is honest. Picking whichever service makes the
+number look better is not.
 
 ## 4. Write down what you know
 
-`cases.example.json` shows the shape. For each case, `expectService` is the
-service whose *own work* changed — not the service where the symptom showed
-up. Getting this wrong is the fastest way to publish a number that is worse
-than the tool.
-
-Where a flag's blast radius genuinely covers two services, say so in `notes`
-and leave the case out of the scored set rather than picking the answer that
-flatters the tool.
+`cases.example.json` is a starting manifest with the flag names and
+`service.name` values verified against this checkout. `expectService` is the
+service whose **own work** changed — not where the symptom surfaced. Getting
+that backwards publishes a number worse than the tool.
 
 ## 5. Score it
 
 ```
 inquest eval -cases cases.json
 ```
-
-Four outcomes, and they are not collapsed into one number:
 
 | outcome | meaning |
 | --- | --- |
@@ -93,24 +143,28 @@ Four outcomes, and they are not collapsed into one number:
 | `declined` | nothing cleared the threshold |
 
 `wrong` and `declined` are counted separately because a localizer that stays
-quiet when it is unsure is usable at 3am and one that is confidently wrong is
-not, and a single hit rate hides the difference. `inquest eval` exits non-zero
+quiet when unsure is usable at 3am and one that is confidently wrong is not,
+and a single hit rate hides which one you built. `inquest eval` exits non-zero
 if any case is `wrong`.
+
+A service that only appears as *waiting on something below it* scores as a
+miss, never a hit. Counting it would let inquest mark its own homework on the
+one distinction it claims to make.
 
 ## 6. Publish the number, including a bad one
 
-Put it in the top-level README with the demo version, the flags used, the
-window length, and the case count. A negative result described accurately is
-worth more than a good one nobody can reproduce — and the README currently
-says any claim about localization quality is unsupported, which stays true
-until this is done.
+Put it in the top-level README with the demo commit, the flags used, the window
+length, and the case count. The README currently says any claim about
+localization quality is unsupported, and that stays true until this is done.
 
 ## Optional: the same traces in Honeycomb
 
 Uncomment the `otlp/honeycomb` exporter in `otelcol-config-extras.yml` and set
-`HONEYCOMB_API_KEY` in the demo's `.env`. Both then see identical traces, so
-the incident inquest localizes can be opened in BubbleUp beside it.
+`HONEYCOMB_API_KEY` in the demo's `.env`, remembering to add it to the traces
+exporter list rather than replacing what is there. Both backends then see
+identical traces, so the incident inquest localizes can be opened in BubbleUp
+beside it.
 
-Note that Honeycomb's Query Data API and MCP server are Enterprise-only, which
-is why inquest reads the collector's output instead of querying a backend.
+Honeycomb's Query Data API and MCP server are Enterprise-only, which is why
+inquest reads the collector's file output instead of querying a backend.
 Sending data works on the free tier; reading it back programmatically does not.

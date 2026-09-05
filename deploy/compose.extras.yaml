@@ -1,0 +1,15 @@
+# inquest: expose the collector's file-exporter output on the host.
+#
+#   docker compose -f compose.yaml -f compose.extras.yaml up -d
+#
+# The collector runs as root, so it creates /tmp/inquest itself; ./inquest-traces
+# is created by the runbook so the bind mount has a host side.
+
+services:
+  otel-collector:
+    volumes:
+      - ${HOST_FILESYSTEM}:/hostfs:ro
+      - ${DOCKER_SOCK}:/var/run/docker.sock:ro
+      - ${OTEL_COLLECTOR_CONFIG}:/etc/otelcol-config.yml
+      - ${OTEL_COLLECTOR_CONFIG_EXTRAS}:/etc/otelcol-config-extras.yml
+      - ./inquest-traces:/tmp/inquest
