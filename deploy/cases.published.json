@@ -1,0 +1,34 @@
+[
+  {
+    "name": "adHighCpu",
+    "flag": "adHighCpu",
+    "expectService": "ad",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-adHighCpu.jsonl",
+    "notes": "CPU burn in the ad service. Injection confirmed in run 1 (GetAds p50 4.4ms to 10.8ms); run 2 verified in run2.log."
+  },
+  {
+    "name": "adManualGc",
+    "flag": "adManualGc",
+    "expectService": "ad",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-adManualGc.jsonl",
+    "notes": "Injection did NOT fire: docker logs ad shows zero collections in this window (run2.log records ad-GC-lines=0), and it also failed to fire on the previous attempt. Kept in the set rather than dropped after seeing the result. A decline here is the demo doing nothing, not inquest missing a cause."
+  },
+  {
+    "name": "productCatalogFailure",
+    "flag": "productCatalogFailure",
+    "expectService": "product-catalog",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-productCatalogFailure.jsonl",
+    "notes": "Fails GetProduct for one product id (OLJCESPC7Z). Could not fire at all before this run: the flag ships with a targeting rule whose branches are both 'off', which overrides defaultVariant. Error-rate case."
+  },
+  {
+    "name": "recommendationCacheFailure",
+    "flag": "recommendationCacheFailure",
+    "expectService": "recommendation",
+    "baselineFile": "baseline.jsonl",
+    "incidentFile": "incident-recommendationCacheFailure.jsonl",
+    "notes": "A cache that grows without bound, so the effect accumulates through the window rather than stepping. In run 1 the responsible operation reached rank 2 with score 1.60 against a 3.0 threshold — a near miss, not a blind spot."
+  }
+]

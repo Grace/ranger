@@ -168,3 +168,34 @@ beside it.
 Honeycomb's Query Data API and MCP server are Enterprise-only, which is why
 inquest reads the collector's file output instead of querying a backend.
 Sending data works on the free tier; reading it back programmatically does not.
+
+
+## Reproducing the published number
+
+The three files that produced the figures in the root README's Accuracy section:
+
+| file | what it does |
+| --- | --- |
+| `run-cases.sh` | drives one capture per flag, all flags off in between, and **verifies each injection after its window**, writing the evidence to the log |
+| `cases.published.json` | the exact manifest that was scored, notes included |
+| `score-cases.sh` | scores it under both ranking modes and both exclusion settings |
+
+Run them from a checkout of the OpenTelemetry Demo with the collector extras in
+place. `WIN` sets the window length in seconds, default 300.
+
+Two things these encode that are easy to get wrong:
+
+**Verify the injection, don't assume it.** A flag that is set is not a flag that
+fired. `productCatalogFailure` ships with a targeting rule whose branches are
+both `"off"`, and a targeting rule overrides `defaultVariant` — so setting the
+default leaves it disabled while every log line says the config reloaded. It
+scored as a clean decline for two runs. `setflag` now rewrites the matched
+branch, and every case records error-span counts and service log evidence next
+to its result.
+
+**One baseline is not enough.** These scripts capture a single baseline and then
+every incident window after it, which is the confound documented in the root
+README: the ad service ended the run about 2.5x slower than it began with
+nothing injected into it, and that drift is attributed to whichever flag was on.
+Interleaving a fresh baseline between injections is the fix and has not been run
+yet. Until it is, any number these produce is a floor on the error rate.
