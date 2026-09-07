@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // Explorer is the payload the web UI works from. Everything the page can show
@@ -23,7 +23,7 @@ type Explorer struct {
 	Culprit    string        `json:"culprit"`
 	// CauseTraces is how many of the embedded traces actually pass through the
 	// localized operation. It is the denominator for "is this window even
-	// about the thing inquest named."
+	// about the thing ranger named."
 	CauseTraces int `json:"causeTraces"`
 
 	// RankBy is the scoring mode the ranking was produced with. The page shows

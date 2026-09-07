@@ -1,4 +1,4 @@
-// Package eval scores inquest against failures somebody else injected.
+// Package eval scores ranger against failures somebody else injected.
 //
 // The distinction this package exists to preserve: naming the wrong service
 // and declining to name one are different outcomes, and collapsing them into
@@ -14,8 +14,8 @@ import (
 	"io"
 	"sort"
 
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // Case is one labeled incident: two windows, and the service the person who
@@ -54,7 +54,7 @@ const (
 	// a short list a human can scan is a different product from an answer.
 	InTop3 Outcome = "in top 3"
 
-	// Wrong means inquest named a different service with confidence. This is
+	// Wrong means ranger named a different service with confidence. This is
 	// the expensive failure and it is counted on its own.
 	Wrong Outcome = "wrong"
 
@@ -68,7 +68,7 @@ type CaseResult struct {
 	Case    Case
 	Outcome Outcome
 
-	Named    string // what inquest said, empty when it declined
+	Named    string // what ranger said, empty when it declined
 	Verdict  string
 	Rank     int // 1-based rank of the expected service, 0 if absent entirely
 	TopScore float64
@@ -94,7 +94,7 @@ func (s Summary) Top1() float64 { return frac(s.Correct, s.Total) }
 // Top3Rate is the fraction where it appeared in the first three.
 func (s Summary) Top3Rate() float64 { return frac(s.Top3, s.Total) }
 
-// WrongRate is the fraction where inquest confidently named the wrong service.
+// WrongRate is the fraction where ranger confidently named the wrong service.
 // This is the number to lead with when the news is bad.
 func (s Summary) WrongRate() float64 { return frac(s.Wrong, s.Total) }
 
@@ -156,7 +156,7 @@ func score(c Case, res localize.Result) CaseResult {
 		r.TopScore = res.Candidates[0].Score
 	}
 
-	// Rank the expected service among candidates inquest was willing to
+	// Rank the expected service among candidates ranger was willing to
 	// stand behind. An operation labeled "waiting on something below it" is
 	// explicitly not an answer, so it does not count as a hit — that is the
 	// whole distinction the project claims to make, and letting it score

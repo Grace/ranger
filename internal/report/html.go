@@ -34,7 +34,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>inquest — %s</title>
+<title>ranger — %s</title>
 <style>
 :root {
   --paper:#faf8f4; --panel:#fffefb; --ink:#1b1d1e; --muted:#6b6862;
@@ -222,7 +222,7 @@ footer { padding:14px 22px 26px; color:var(--muted); font-size:11px; border-top:
         '<div class="why">' + esc(topWhy()) + '</div></div>'
       : '<div class="verdict none"><div class="op">No operation explains this window</div>' +
         '<div class="why">Nothing cleared the reporting threshold. The ranking is shown anyway &mdash; the near misses are the useful part.</div></div>';
-    return '<header><h1>inquest</h1>' +
+    return '<header><h1>ranger</h1>' +
       '<div class="sub mono">' + esc(D.window) + '</div>' + v + '</header>';
   }
   function topWhy() {

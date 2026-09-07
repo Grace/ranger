@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 var t0 = time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
@@ -90,7 +90,7 @@ func TestNamingTheWrongServiceIsNotTheSameAsDeclining(t *testing.T) {
 }
 
 // A service that only shows up as "waiting on something below it" has been
-// explicitly ruled out as a cause. Counting it as a hit would let inquest mark
+// explicitly ruled out as a cause. Counting it as a hit would let ranger mark
 // its own homework on the one distinction it claims to make.
 func TestAWaiterDoesNotCountAsAHit(t *testing.T) {
 	files := map[string][]*trace.Trace{

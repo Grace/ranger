@@ -14,8 +14,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // View is everything the template needs. Built once, rendered once; no logic
@@ -92,7 +92,7 @@ type TimelineSpan struct {
 // Build assembles the view from a localization and the incident traces.
 func Build(res localize.Result, incident []*trace.Trace, window string) View {
 	v := View{
-		Title:      "inquest — " + window,
+		Title:      "ranger — " + window,
 		Generated:  time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		Localized:  res.Localized,
 		Considered: res.Considered,

@@ -1,11 +1,11 @@
-# Running inquest against the OpenTelemetry Demo
+# Running ranger against the OpenTelemetry Demo
 
-`inquest demo` proves the plumbing works and nothing else — the generator picks
+`ranger demo` proves the plumbing works and nothing else — the generator picks
 the answer there, so finding it means nothing. This directory is how you get a
 number that counts: the [OpenTelemetry
 Demo](https://github.com/open-telemetry/opentelemetry-demo) ships feature flags
 that inject specific failures, so ground truth comes from the person who
-flipped the flag rather than from inquest.
+flipped the flag rather than from ranger.
 
 Everything below was run against demo commit `8c47d47` on 2026-09-05.
 
@@ -18,9 +18,9 @@ The images are about 10 GB. `df -h ~` and `docker system df` before you pull.
 ```
 git clone --depth 1 https://github.com/open-telemetry/opentelemetry-demo.git
 cd opentelemetry-demo
-mkdir -p inquest-traces
-cp /path/to/inquest/deploy/otelcol-config-extras.yml src/otel-collector/
-cp /path/to/inquest/deploy/compose.extras.yaml .
+mkdir -p ranger-traces
+cp /path/to/ranger/deploy/otelcol-config-extras.yml src/otel-collector/
+cp /path/to/ranger/deploy/compose.extras.yaml .
 docker compose -f compose.yaml -f compose.extras.yaml up -d
 ```
 
@@ -47,13 +47,13 @@ Error response from daemon: client version 1.44 is too new. Maximum supported AP
 ```
 
 The extras config here drops `docker_stats` from the metrics pipeline. It is a
-metrics receiver and inquest only reads traces, so nothing is lost. Upgrading
+metrics receiver and ranger only reads traces, so nothing is lost. Upgrading
 Docker also fixes it.
 
 Confirm spans are landing before going further:
 
 ```
-wc -l inquest-traces/traces.jsonl
+wc -l ranger-traces/traces.jsonl
 docker ps --filter name=otel-collector --format '{{.Status}}'
 ```
 
@@ -62,7 +62,7 @@ docker ps --filter name=otel-collector --format '{{.Status}}'
 Let the load generator run a few minutes so the system is warm:
 
 ```
-/path/to/inquest/deploy/capture.sh 300 baseline.jsonl
+/path/to/ranger/deploy/capture.sh 300 baseline.jsonl
 ```
 
 **Window length is not a detail.** Load is very unevenly distributed across the
@@ -102,7 +102,7 @@ productCatalogFailure  recommendationCacheFailure
 Flip exactly one, wait for it to take hold, then:
 
 ```
-/path/to/inquest/deploy/capture.sh 300 incident-<flag>.jsonl
+/path/to/ranger/deploy/capture.sh 300 incident-<flag>.jsonl
 ```
 
 Turn it back off before the next one. Two flags at once produces a window with
@@ -112,7 +112,7 @@ two causes and neither the manifest nor the scoring can express that.
 
 - **`loadGeneratorFloodHomepage`** — more traffic, no service at fault. There is
   no correct answer to score against. Worth running separately as a check that
-  inquest *declines*, which is the right behaviour.
+  ranger *declines*, which is the right behaviour.
 - **`kafkaQueueProblems`** — overloads the queue *and* delays the consumer, so
   the blast radius covers two services.
 - **`failedReadinessProbe`**, **`imageSlowLoad`** — the symptom may not appear
@@ -132,23 +132,23 @@ that backwards publishes a number worse than the tool.
 ## 5. Score it
 
 ```
-inquest eval -cases cases.json
+ranger eval -cases cases.json
 ```
 
 | outcome | meaning |
 | --- | --- |
 | `correct` | the responsible service ranked first |
 | `in top 3` | second or third — a list a human can scan |
-| `wrong` | inquest confidently named a service that was not responsible |
+| `wrong` | ranger confidently named a service that was not responsible |
 | `declined` | nothing cleared the threshold |
 
 `wrong` and `declined` are counted separately because a localizer that stays
 quiet when unsure is usable at 3am and one that is confidently wrong is not,
-and a single hit rate hides which one you built. `inquest eval` exits non-zero
+and a single hit rate hides which one you built. `ranger eval` exits non-zero
 if any case is `wrong`.
 
 A service that only appears as *waiting on something below it* scores as a
-miss, never a hit. Counting it would let inquest mark its own homework on the
+miss, never a hit. Counting it would let ranger mark its own homework on the
 one distinction it claims to make.
 
 ## 6. Publish the number, including a bad one
@@ -162,11 +162,11 @@ localization quality is unsupported, and that stays true until this is done.
 Uncomment the `otlp/honeycomb` exporter in `otelcol-config-extras.yml` and set
 `HONEYCOMB_API_KEY` in the demo's `.env`, remembering to add it to the traces
 exporter list rather than replacing what is there. Both backends then see
-identical traces, so the incident inquest localizes can be opened in BubbleUp
+identical traces, so the incident ranger localizes can be opened in BubbleUp
 beside it.
 
 Honeycomb's Query Data API and MCP server are Enterprise-only, which is why
-inquest reads the collector's file output instead of querying a backend.
+ranger reads the collector's file output instead of querying a backend.
 Sending data works on the free tier; reading it back programmatically does not.
 
 

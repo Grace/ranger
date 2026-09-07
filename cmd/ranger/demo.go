@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // demoCmd generates two windows of synthetic traces with a known cause and
@@ -16,9 +16,9 @@ import (
 //
 // This exists so the report can be looked at without standing up a collector,
 // and so the shape of the output is reviewable on its own. It is not evidence
-// of anything: the generator decides the answer, so inquest finding it proves
+// of anything: the generator decides the answer, so ranger finding it proves
 // only that the plumbing works. The accuracy number has to come from traces
-// inquest did not author.
+// ranger did not author.
 func demoCmd(args []string) error {
 	fs := flag.NewFlagSet("demo", flag.ExitOnError)
 	out := fs.String("out", "report.html", "where to write the report")

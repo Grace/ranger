@@ -1,4 +1,4 @@
-// Package source loads spans into inquest.
+// Package source loads spans into ranger.
 //
 // It reads OTLP/JSON — the format the OpenTelemetry Collector's file exporter
 // writes — rather than querying an observability vendor's API.
@@ -8,7 +8,7 @@
 // is a reproducible accuracy number cannot put its data source behind a tier
 // most readers do not have. Reading the collector's own output means anyone
 // with the OpenTelemetry Demo and a config file can rerun the number, and it
-// means inquest is not coupled to any one backend. Point the same collector at
+// means ranger is not coupled to any one backend. Point the same collector at
 // Honeycomb as a second exporter and both see identical traces.
 package source
 
@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // otlpFile is one line of the collector's file exporter output.

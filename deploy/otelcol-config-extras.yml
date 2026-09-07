@@ -1,9 +1,9 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# inquest: write every span to a file so a window can be captured and localized
+# ranger: write every span to a file so a window can be captured and localized
 # offline. Copy to src/otel-collector/ in an opentelemetry-demo checkout.
-# See github.com/Grace/inquest/deploy/README.md.
+# See github.com/Grace/ranger/deploy/README.md.
 #
 # The collector merges config files but REPLACES arrays rather than appending,
 # so the traces pipeline below has to repeat the upstream exporters or it turns
@@ -16,28 +16,28 @@
 # repeated here — add otlp_grpc/jaeger back if you bring observability up.
 
 exporters:
-  file/inquest:
-    path: /tmp/inquest/traces.jsonl
+  file/ranger:
+    path: /tmp/ranger/traces.jsonl
 
 service:
   pipelines:
     traces:
-      exporters: [debug, span_metrics, file/inquest]
+      exporters: [debug, span_metrics, file/ranger]
 
     # The docker_stats receiver asks for Docker API 1.44; this daemon caps at
     # 1.41, and the collector treats a receiver that cannot start as fatal —
     # so it crash-loops and no traces reach the file at all. It is a metrics
-    # receiver and inquest only reads traces, so it is dropped here rather
+    # receiver and ranger only reads traces, so it is dropped here rather
     # than worked around. Arrays are replaced, so this repeats the upstream
     # metrics receivers minus that one.
     metrics:
       receivers: [http_check/frontend-proxy, host_metrics, nginx, otlp, redis, postgresql, prometheus/ad, span_metrics]
 
-# Optional: send the same spans to Honeycomb so the incident inquest localizes
+# Optional: send the same spans to Honeycomb so the incident ranger localizes
 # can be opened in BubbleUp beside it. Add otlp/honeycomb to the traces
 # exporter list above rather than replacing what is there, and set
 # HONEYCOMB_API_KEY in the demo's .env. The free tier accepts data; reading it
-# back programmatically needs Enterprise, which is why inquest reads this file.
+# back programmatically needs Enterprise, which is why ranger reads this file.
 #
 # exporters:
 #   otlp/honeycomb:

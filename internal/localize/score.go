@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // Verdict says what kind of change an operation underwent, which is the whole
@@ -74,7 +74,7 @@ const (
 )
 
 // Options tunes the thresholds. The defaults are deliberately conservative:
-// inquest would rather say nothing explains this than name the wrong service
+// ranger would rather say nothing explains this than name the wrong service
 // at 3am.
 type Options struct {
 	// MinSamples is the number of observations an operation needs in *both*
@@ -90,13 +90,13 @@ type Options struct {
 	// MinErrorRateShift is the equivalent floor for failures.
 	MinErrorRateShift float64
 
-	// ReportThreshold is the score below which inquest declines to name a
+	// ReportThreshold is the score below which ranger declines to name a
 	// cause. This is what makes "no code change explains this" a real answer
 	// rather than a thing the README promises.
 	ReportThreshold float64
 
 	// Rank selects significance or effect size as the score. Empty means
-	// ByDeviation, which is what inquest shipped first.
+	// ByDeviation, which is what ranger shipped first.
 	Rank Ranking
 
 	// ExcludeServices are services removed from the ranking entirely.
@@ -149,7 +149,7 @@ func (o Options) ApplyRanking(r Ranking, explicit bool, threshold float64) Optio
 	return o
 }
 
-// Result is a complete localization: the ranking, and whether inquest is
+// Result is a complete localization: the ranking, and whether ranger is
 // willing to stand behind the top of it.
 type Result struct {
 	Candidates []Candidate

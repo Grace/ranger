@@ -1,5 +1,5 @@
 // Package trace holds the span model and the one measurement everything else
-// in inquest is built on: self time.
+// in ranger is built on: self time.
 //
 // A span's duration includes the time its children were running. That makes
 // duration useless for localization — when a leaf service slows down, every
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Span is the subset of an OpenTelemetry span inquest reasons about.
+// Span is the subset of an OpenTelemetry span ranger reasons about.
 type Span struct {
 	TraceID  string
 	SpanID   string
@@ -32,7 +32,7 @@ type Span struct {
 	// overwhelmingly common case and it does not mean failure.
 	Status string
 
-	// Attrs carries the resource and span attributes inquest can key on —
+	// Attrs carries the resource and span attributes ranger can key on —
 	// service.version and deployment.environment among them. Nil is fine.
 	Attrs map[string]string
 }
@@ -43,7 +43,7 @@ func (s Span) Duration() time.Duration { return s.End.Sub(s.Start) }
 // Failed reports whether the span carries an ERROR status.
 func (s Span) Failed() bool { return s.Status == "ERROR" }
 
-// Operation is the unit inquest localizes to. Two spans are the same operation
+// Operation is the unit ranger localizes to. Two spans are the same operation
 // when the same service is doing the same named thing; that is the granularity
 // an on-call engineer can act on, and it is coarse enough for the per-window
 // sample counts to mean something.
@@ -108,7 +108,7 @@ func Assemble(spans []Span) []*Trace {
 		out = append(out, t)
 	}
 
-	// Deterministic order. inquest promises the same incident yields the same
+	// Deterministic order. ranger promises the same incident yields the same
 	// answer, and that has to survive Go's map iteration.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

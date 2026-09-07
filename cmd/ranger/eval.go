@@ -8,12 +8,12 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/Grace/inquest/internal/eval"
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/eval"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/trace"
 )
 
-// evalCmd scores inquest against a manifest of labeled incidents.
+// evalCmd scores ranger against a manifest of labeled incidents.
 func evalCmd(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	manifest := fs.String("cases", "", "JSON manifest of labeled cases")
@@ -72,7 +72,7 @@ func evalCmd(args []string) error {
 	fmt.Printf("ranked by %s, reporting threshold %.2f\n\n", opt.Rank, opt.ReportThreshold)
 	printSummary(sum, opt.ExcludeServices)
 
-	// A run in which inquest confidently named the wrong service is a failing
+	// A run in which ranger confidently named the wrong service is a failing
 	// run, whatever the hit rate was. Exiting non-zero makes that impossible
 	// to skim past in CI.
 	if sum.Wrong > 0 {

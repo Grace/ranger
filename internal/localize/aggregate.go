@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 // Sample is one observation of an operation within one trace.
@@ -28,7 +28,7 @@ type Sample struct {
 	Children int
 }
 
-// Profile is everything inquest knows about one operation in one window.
+// Profile is everything ranger knows about one operation in one window.
 type Profile struct {
 	Op      trace.Operation
 	Samples int
@@ -42,7 +42,7 @@ type Profile struct {
 	MADSelfTime    time.Duration // median absolute deviation, the spread
 
 	// MedianDuration includes time spent in children. Carrying both is what
-	// lets inquest say "this operation got slower because something below it
+	// lets ranger say "this operation got slower because something below it
 	// did" — a duration shift with no self-time shift underneath it.
 	MedianDuration time.Duration
 
@@ -126,7 +126,7 @@ func summarize(op trace.Operation, ss []Sample) *Profile {
 // quantile returns the q-th quantile of a sorted slice using nearest-rank,
 // which keeps the result an observed value rather than an interpolation
 // between two of them. An interpolated median is not a duration anything
-// actually took, and inquest has to be able to point at its evidence.
+// actually took, and ranger has to be able to point at its evidence.
 func quantile(sorted []time.Duration, q float64) time.Duration {
 	if len(sorted) == 0 {
 		return 0

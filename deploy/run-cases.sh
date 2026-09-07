@@ -7,7 +7,7 @@
 # and cannot clear min-samples in a 5-minute window.
 #
 # Every case here verifies its own injection AFTER the window and writes the
-# evidence to the log, so a decline can be attributed to inquest or to the
+# evidence to the log, so a decline can be attributed to ranger or to the
 # demo without guessing.
 set -uo pipefail
 cd "$(dirname "$0")"

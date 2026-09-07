@@ -1,8 +1,8 @@
-// Command inquest localizes a regression to an operation and writes the
+// Command ranger localizes a regression to an operation and writes the
 // evidence out as a self-contained HTML page.
 //
-//	inquest localize -baseline base.jsonl -incident incident.jsonl -out report.html
-//	inquest demo -out report.html
+//	ranger localize -baseline base.jsonl -incident incident.jsonl -out report.html
+//	ranger demo -out report.html
 //
 // Both inputs are newline-delimited OTLP/JSON, the format the OpenTelemetry
 // Collector's file exporter writes.
@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Grace/inquest/internal/localize"
-	"github.com/Grace/inquest/internal/report"
-	"github.com/Grace/inquest/internal/source"
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/report"
+	"github.com/Grace/ranger/internal/source"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 func main() {
@@ -43,17 +43,17 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "inquest:", err)
+		fmt.Fprintln(os.Stderr, "ranger:", err)
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `inquest — deterministic root-cause localization
+	fmt.Fprint(os.Stderr, `ranger — deterministic root-cause localization
 
-  inquest localize -baseline <file> -incident <file> [-out report.html]
-  inquest demo [-out report.html]
-  inquest eval -cases <manifest.json>
+  ranger localize -baseline <file> -incident <file> [-out report.html]
+  ranger demo [-out report.html]
+  ranger eval -cases <manifest.json>
 
 Inputs are newline-delimited OTLP/JSON from the OpenTelemetry Collector's
 file exporter.
@@ -70,7 +70,7 @@ func localizeCmd(args []string) error {
 	exclude := fs.String("exclude", "", "comma-separated services to drop from the ranking")
 	rank := fs.String("rank", "deviation", "how to score: deviation (robust-z, how surprising) or effect (share of the operation's own baseline)")
 	threshold := fs.Float64("threshold", -1, "override the reporting threshold; default 3.0 for deviation, 1.0 for effect")
-	top := fs.Int("top", 0, "also print the top N candidates and their arithmetic, including near misses when inquest declines")
+	top := fs.Int("top", 0, "also print the top N candidates and their arithmetic, including near misses when ranger declines")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

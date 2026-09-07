@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Grace/inquest/internal/trace"
+	"github.com/Grace/ranger/internal/trace"
 )
 
 var base = time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
@@ -72,7 +72,7 @@ func TestNamesTheServiceThatGotSlowerNotTheOnesWaitingOnIt(t *testing.T) {
 }
 
 // A dimensional diff sees all three services get slower and has no way to
-// order them. This is the claim inquest has to be able to demonstrate, so it
+// order them. This is the claim ranger has to be able to demonstrate, so it
 // gets its own test.
 func TestEveryServiceOnThePathGetsSlowerButOnlyOneIsRanked(t *testing.T) {
 	baseline := chain(50, 10*time.Millisecond, 5*time.Millisecond, false)
@@ -234,7 +234,7 @@ func TestExcludedServicesAreDroppedAndReportedBack(t *testing.T) {
 		t.Errorf("Excluded = %v, want [postgres] echoed back", res.Excluded)
 	}
 	// With the real cause removed, the remaining operations are all waiters,
-	// so inquest should decline rather than promote one of them.
+	// so ranger should decline rather than promote one of them.
 	if res.Localized {
 		t.Errorf("localized %s after the cause was excluded", res.Candidates[0].Op)
 	}

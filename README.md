@@ -1,8 +1,8 @@
-# inquest
+# ranger
 
 Deterministic root-cause localization for distributed systems.
 
-Given an incident window and a symptom, inquest identifies the service and
+Given an incident window and a symptom, ranger identifies the service and
 deploy most likely responsible — with the evidence and the scoring that
 produced the ranking, or an explicit "no code change explains this."
 
@@ -28,9 +28,9 @@ depending on the ranking mode.** See [Accuracy](#accuracy), which also describes
 a drift confound in the harness large enough that the number should be read as a
 floor on the error rate rather than an estimate of it.
 
-`inquest localize` reads two windows of OTLP/JSON from the OpenTelemetry
+`ranger localize` reads two windows of OTLP/JSON from the OpenTelemetry
 Collector's file exporter, ranks operations, and writes a self-contained HTML
-report. `inquest eval` scores a manifest of labeled incidents. `deploy/` has
+report. `ranger eval` scores a manifest of labeled incidents. `deploy/` has
 the runbook for producing those windows from the OpenTelemetry Demo.
 
 ## Accuracy
@@ -45,7 +45,7 @@ Against the OpenTelemetry Demo at commit `8c47d47`, four labeled failures, one
 | `-rank effect` | 25% | 50% | 25% | 25% |
 | `-rank effect -exclude load-generator` | 25% | 50% | 25% | 25% |
 
-Four cases is not a benchmark. It is enough to say that inquest names the wrong
+Four cases is not a benchmark. It is enough to say that ranger names the wrong
 service more often than the right one, and that is the number to carry.
 
 Per case, under `-rank effect`:
@@ -77,7 +77,7 @@ the ranking in the `recommendationCacheFailure` window — a false positive
 manufactured by the harness, not by the ranking.
 
 **So the honest reading is that this measures the harness at least as much as it
-measures inquest.** The fix is interleaving a fresh baseline between injections
+measures ranger.** The fix is interleaving a fresh baseline between injections
 rather than reusing one, and until that runs, the table above is a floor on the
 error rate and not an estimate of it.
 
@@ -109,7 +109,7 @@ artifact is kept because figures from that window appear in the write-up.
 
 `-rank deviation` scores an operation by robust-z: how far its self-time shift
 falls outside its own historical spread. That is a significance test, and
-inquest originally read it as importance. Across tiers those diverge badly — a
+ranger originally read it as importance. Across tiers those diverge badly — a
 load generator moving 30% of a 2.4-second baseline outscores a gRPC handler
 tripling 3.5ms — so `-rank effect` scores the shift as a fraction of the
 operation's own baseline instead, an effect size, with a threshold of 1.0 (the

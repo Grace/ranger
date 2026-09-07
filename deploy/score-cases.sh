@@ -6,8 +6,8 @@
 # doing the work.
 set -uo pipefail
 cd "$(dirname "$0")"
-BIN=/tmp/inquest
-(cd ~/code/inquest && go build -o "$BIN" ./cmd/inquest) || { echo "build failed"; exit 1; }
+BIN=/tmp/ranger
+(cd ~/code/ranger && go build -o "$BIN" ./cmd/ranger) || { echo "build failed"; exit 1; }
 
 for rank in deviation effect; do
   for excl in "" "load-generator"; do

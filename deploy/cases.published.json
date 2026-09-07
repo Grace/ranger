@@ -13,7 +13,7 @@
     "expectService": "ad",
     "baselineFile": "baseline.jsonl",
     "incidentFile": "incident-adManualGc.jsonl",
-    "notes": "Injection did NOT fire: docker logs ad shows zero collections in this window (run2.log records ad-GC-lines=0), and it also failed to fire on the previous attempt. Kept in the set rather than dropped after seeing the result. A decline here is the demo doing nothing, not inquest missing a cause."
+    "notes": "Injection did NOT fire: docker logs ad shows zero collections in this window (run2.log records ad-GC-lines=0), and it also failed to fire on the previous attempt. Kept in the set rather than dropped after seeing the result. A decline here is the demo doing nothing, not ranger missing a cause."
   },
   {
     "name": "productCatalogFailure",
