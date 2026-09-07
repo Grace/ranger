@@ -14,13 +14,13 @@ import (
 // file:// on a laptop with no network, which is the state most people are in
 // when they are looking at an incident.
 type Explorer struct {
-	Window     string        `json:"window"`
-	Generated  string        `json:"generated"`
-	Services   []string      `json:"services"`
-	Traces     []ExpTrace    `json:"traces"`
-	Ranking    []ExpRank     `json:"ranking"`
-	Localized  bool          `json:"localized"`
-	Culprit    string        `json:"culprit"`
+	Window    string     `json:"window"`
+	Generated string     `json:"generated"`
+	Services  []string   `json:"services"`
+	Traces    []ExpTrace `json:"traces"`
+	Ranking   []ExpRank  `json:"ranking"`
+	Localized bool       `json:"localized"`
+	Culprit   string     `json:"culprit"`
 	// CauseTraces is how many of the embedded traces actually pass through the
 	// localized operation. It is the denominator for "is this window even
 	// about the thing ranger named."
