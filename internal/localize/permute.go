@@ -106,6 +106,19 @@ func Permute(baseline, incident map[trace.Operation]*Profile, opt Options, permu
 		return Significance{Permutations: permutations}
 	}
 
+	// Fix the order before shuffling anything. Go randomizes map iteration, so
+	// ranging over the incident window builds this slice differently on every
+	// run — and the RNG is then consumed in a different order, producing a
+	// different null from the same seed. The p is usually stable enough to hide
+	// it; the null percentile is not, and it moved between 1.22 and 1.28 across
+	// three runs of an identical command before this line existed.
+	//
+	// A significance number nobody else can reproduce is not evidence, which is
+	// the claim this package makes two paragraphs up.
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].base.Op.String() < pairs[j].base.Op.String()
+	})
+
 	observed := observedTopScore(baseline, incident, opt)
 
 	rng := rand.New(rand.NewSource(seed))

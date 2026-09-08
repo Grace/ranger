@@ -114,14 +114,59 @@ func TestNullP95GrowsWithThePopulationSearched(t *testing.T) {
 }
 
 // A reported p that changes between runs is not evidence.
-func TestPermutationIsReproducible(t *testing.T) {
-	rng := rand.New(rand.NewSource(5))
-	base := sampled(rng, 30, 150, 10*time.Millisecond, 0.30)
-	inc := sampled(rng, 30, 150, 10*time.Millisecond, 0.30)
+//
+// Calling Permute twice over the same two maps is too weak a test and passed
+// while the bug was live. Go randomizes map iteration per map, not per range,
+// so both calls walked the operations in the same order and consumed the RNG
+// identically. The failure only appears across separately constructed maps —
+// which is what a second process does, and what anyone rerunning a published
+// number does.
+func TestPermutationIsReproducibleAcrossIdenticalWindows(t *testing.T) {
+	// The operations must differ from each other. An earlier version of this
+	// test built thirty identical ones, and it passed with the bug live: when
+	// every pair is exchangeable, consuming the RNG in a different order draws
+	// the same distribution of maxima and the defect is invisible. Varying the
+	// centre and the sample count makes which pair draws which numbers matter.
+	build := func() (map[trace.Operation]*Profile, map[trace.Operation]*Profile) {
+		rng := rand.New(rand.NewSource(5))
+		base := map[trace.Operation]*Profile{}
+		inc := map[trace.Operation]*Profile{}
+		for i := 0; i < 30; i++ {
+			op := trace.Operation{Service: fmt.Sprintf("svc-%02d", i), Name: "op"}
+			centre := time.Duration(5+7*i) * time.Millisecond
+			n := 80 + 11*i
+			draw := func() []time.Duration {
+				out := make([]time.Duration, n)
+				for j := range out {
+					f := 1 + rng.NormFloat64()*0.35
+					if f < 0.05 {
+						f = 0.05
+					}
+					out[j] = time.Duration(float64(centre) * f)
+				}
+				return out
+			}
+			base[op] = summarize(op, samplesFrom(draw()))
+			inc[op] = summarize(op, samplesFrom(draw()))
+		}
+		return base, inc
+	}
 
-	a := Permute(base, inc, DefaultOptions(), 200, 42)
-	b := Permute(base, inc, DefaultOptions(), 200, 42)
-	if a.P != b.P || a.NullP95 != b.NullP95 {
-		t.Errorf("same seed gave different answers: %+v vs %+v", a, b)
+	baseA, incA := build()
+	baseB, incB := build()
+
+	a := Permute(baseA, incA, DefaultOptions(), 200, 42)
+	b := Permute(baseB, incB, DefaultOptions(), 200, 42)
+
+	if a.P != b.P {
+		t.Errorf("same seed gave different p: %.4f vs %.4f", a.P, b.P)
+	}
+	// The percentile is the sensitive one. p survives a reordered null often
+	// enough to look fine while the distribution underneath has moved.
+	if a.NullP95 != b.NullP95 {
+		t.Errorf("same seed gave different null p95: %.6f vs %.6f", a.NullP95, b.NullP95)
+	}
+	if a.Observed != b.Observed {
+		t.Errorf("same windows gave different observed score: %.6f vs %.6f", a.Observed, b.Observed)
 	}
 }
