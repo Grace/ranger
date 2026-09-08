@@ -53,6 +53,8 @@ of them run a second time, for thirteen scored incidents. Each has **its own**
 | `-rank deviation -exclude load-generator` | 38% | 38% | 23% | 38% |
 | `-rank effect` | 38% | 38% | 23% | 38% |
 | `-rank effect -exclude load-generator` | 38% | 38% | 23% | 38% |
+| `-rank effect-adjusted` | 38% | 38% | **15%** | 46% |
+| `-rank effect-adjusted -exclude load-generator` | 38% | 38% | **15%** | 46% |
 
 Thirteen cases is not a benchmark either. It is enough to say that ranger is
 right about a third of the time, wrong about a quarter, and silent the rest —
@@ -70,6 +72,48 @@ Per case, under `-rank effect`:
 | `emailMemoryLeak-1000x` | declined | 13 |
 | `paymentFailure-25` | **wrong** — named `ad · GetAds` | — |
 | `productCatalogFailure` ×2 | **wrong** — named `frontend · GET /api/recommendations` both times | 6, 6 |
+
+### Dividing out what the whole window did
+
+`-rank effect-adjusted` scores each operation against how far the *typical*
+operation moved rather than against zero. If the background drifted, every
+operation carries that drift, and removing it leaves what is specific to each.
+
+It has the lowest wrong rate of the three modes at the same top-1, and the case
+it fixes is `paymentFailure-25`: plain effect names `ad · GetAds` for a payment
+fault, and dividing out the background demotes it below the threshold instead.
+**That is one case out of thirteen changing.** It is not significance, and the
+mode is not the default.
+
+Two things had to be right before it helped at all, and both were wrong first.
+
+Dividing by a median below 1.0 inflates every operation rather than correcting
+one. `adHighCpu`'s windows came in at 0.81× and 0.86× — the background got
+*faster* — and the naive version turned two honest declines into a wrong answer
+and a near miss. Only a background that slowed is deflated; one that sped up
+cannot manufacture a false positive, so there is nothing to remove.
+
+Writing the adjusted score directly also overwrote the absolute floor that stops
+an operation being promoted by ratio alone. On the control window that promoted
+`ad · getAdsByCategory` for going from 310µs to 632µs — a clean doubling of a
+third of a millisecond, on a system where nothing was broken. Adjustment
+rescales a finding; it must not create one.
+
+The control case caught both. Before it existed, every incident in the set had a
+culprit, so an invented one had nothing to fail against.
+
+### What the distribution says that the median does not
+
+Each candidate also carries a two-sample **KS** statistic and a **Wasserstein**
+distance over the retained self-time samples. Neither is ranked on: the numbers
+above describe the current ranking, and changing the measurement and the ranking
+together would leave any difference unattributable to either.
+
+They disagree with the ranking, and they do not fix it. In `paymentFailure-25`,
+`checkout · POST` moved 324ms of earth against a median shift of 8.5ms —
+twenty-two times more than the operation ranked first — while the service the
+case is labelled with does not appear in the top 25 at all. No statistic over
+these two windows was going to find it.
 
 ### Every repeat agreed with itself
 
