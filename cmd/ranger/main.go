@@ -9,6 +9,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/narrate"
 	"github.com/Grace/ranger/internal/report"
 	"github.com/Grace/ranger/internal/source"
 	"github.com/Grace/ranger/internal/trace"
@@ -71,6 +74,8 @@ func localizeCmd(args []string) error {
 	rank := fs.String("rank", "deviation", "how to score: deviation (robust-z, how surprising) or effect (share of the operation's own baseline)")
 	threshold := fs.Float64("threshold", -1, "override the reporting threshold; default 3.0 for deviation, 1.0 for effect")
 	top := fs.Int("top", 0, "also print the top N candidates and their arithmetic, including near misses when ranger declines")
+	narrateURL := fs.String("narrate", os.Getenv("RANGER_NARRATE_ENDPOINT"), "OpenAI-compatible chat completions URL; when set, the finished ranking is also written up in prose")
+	narrateModel := fs.String("narrate-model", envOr("RANGER_NARRATE_MODEL", "gpt-4o-mini"), "model id for -narrate")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -102,7 +107,11 @@ func localizeCmd(args []string) error {
 	}
 
 	window := fmt.Sprintf("%s → %s", filepath.Base(*basePath), filepath.Base(*incPath))
-	return emit(baseline, incident, opt, window, *out, *maxTraces, *top)
+	return emit(baseline, incident, opt, window, *out, *maxTraces, *top, narrate.Options{
+		Endpoint: *narrateURL,
+		Model:    *narrateModel,
+		Key:      os.Getenv("RANGER_NARRATE_KEY"),
+	})
 }
 
 func load(path string) ([]*trace.Trace, error) {
@@ -122,7 +131,7 @@ func load(path string) ([]*trace.Trace, error) {
 	return trace.Assemble(spans), nil
 }
 
-func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out string, maxTraces, top int) error {
+func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out string, maxTraces, top int, nopt narrate.Options) error {
 	res := localize.Localize(
 		localize.ProfileWindow(baseline),
 		localize.ProfileWindow(incident),
@@ -152,8 +161,32 @@ func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out s
 	if top > 0 {
 		printTop(res, top)
 	}
+
+	// Prose, if an endpoint was configured. The ranking above was already
+	// printed and is unaffected by anything that happens here: a narrator that
+	// is slow, broken, or contradicts the ranking costs the reader nothing but
+	// a line on stderr.
+	if n := narrate.New(nopt); n.Enabled() {
+		text, err := n.Narrate(context.Background(), res)
+		switch {
+		case err == nil:
+			fmt.Fprintf(os.Stderr, "\n%s\n", text)
+		case errors.Is(err, narrate.ErrContradicted):
+			fmt.Fprintf(os.Stderr, "\nnarration discarded: %v\n%s\n", err, narrate.Summary(res))
+		default:
+			fmt.Fprintf(os.Stderr, "\nnarration unavailable (%v)\n%s\n", err, narrate.Summary(res))
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "wrote %s\n", out)
 	return nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // printTop shows the ranking itself, not just its winner.

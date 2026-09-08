@@ -137,9 +137,21 @@ func BuildExplorer(res localize.Result, baseline, incident []*trace.Trace, windo
 	// with the incident and are guaranteed to sit at the top. Worse, the cap
 	// below is applied after this sort, so ordering by duration could drop
 	// every trace containing the cause before anyone saw one.
+	//
+	// Among traces that do contain the cause, prefer one with a caller over a
+	// bare server span. The slowest trace in this window is frequently the
+	// cause span on its own, sampled without its parent, and a single bar
+	// shows nothing: the claim ranger makes is that the callee's own work
+	// moved while the caller merely waited, and that is only legible when
+	// both are on screen. Ordering structure ahead of duration makes the
+	// first trace anyone opens the one that demonstrates the distinction.
 	sort.Slice(e.Traces, func(i, j int) bool {
 		if e.Traces[i].HasCause != e.Traces[j].HasCause {
 			return e.Traces[i].HasCause
+		}
+		li, lj := len(e.Traces[i].Spans) > 1, len(e.Traces[j].Spans) > 1
+		if li != lj {
+			return li
 		}
 		if e.Traces[i].DurMS != e.Traces[j].DurMS {
 			return e.Traces[i].DurMS > e.Traces[j].DurMS

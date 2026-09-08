@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Grace/ranger/internal/localize"
+	"github.com/Grace/ranger/internal/narrate"
 	"github.com/Grace/ranger/internal/trace"
 )
 
@@ -32,8 +33,11 @@ func demoCmd(args []string) error {
 	incident := synth(*traces, rand.New(rand.NewSource(*seed+1)), 190*time.Millisecond)
 
 	fmt.Fprintln(os.Stderr, "demo: postgres 'SELECT items' slowed 12ms → 190ms; everything above it waits on that")
+	// No narration here. The generator already decided the answer, so prose
+	// about it would be describing a fixture.
 	return emit(baseline, incident, localize.DefaultOptions(),
-		fmt.Sprintf("synthetic demo · %d traces per window", *traces), *out, 300, 0)
+		fmt.Sprintf("synthetic demo · %d traces per window", *traces), *out, 300, 0,
+		narrate.Options{})
 }
 
 // synth builds a small storefront: a frontend entry point that fans out to

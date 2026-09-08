@@ -10,10 +10,16 @@ produced the ranking, or an explicit "no code change explains this."
 
 The causal engine is deterministic. It walks the OpenTelemetry trace DAG to
 find the **deepest span whose deviation from baseline is not explained by its
-children**, then follows resource attributes through build provenance to a
-commit range and a diff.
+children**. Resource attributes such as `service.version` are carried through
+so a result can name the deploy it came from; resolving that to a commit range
+and a diff is designed but **not built** — see [Not built](#not-built).
 
-An LLM is optional and is used only to narrate a ranking it did not produce.
+An LLM is optional, and when enabled it narrates a ranking it did not produce:
+the answer exists before the model is called, the model is handed the finished
+ranking rather than the traces, and its prose is checked against that ranking
+before anyone sees it. Prose that names a different service is discarded and
+the deterministic summary is printed instead. See
+[Narration](#narration).
 
 Two properties follow, and neither is available to an LLM-first design:
 
@@ -22,9 +28,11 @@ Two properties follow, and neither is available to an LLM-first design:
 
 ## Status
 
-Pre-alpha. Scored against four labeled failures in the OpenTelemetry Demo:
-**top-1 25%, and it names the wrong service in a quarter to a half of cases
-depending on the ranking mode.** See [Accuracy](#accuracy), which also describes
+Pre-alpha. Scored against four labeled failures in the OpenTelemetry Demo,
+ranking 88 operations per window: **top-1 25%, and it names the wrong service
+in a quarter to a half of cases depending on the ranking mode.** Chance on 88
+operations is roughly 1%, which is the only reason 25% is worth reporting at
+all rather than the reason it is good. See [Accuracy](#accuracy), which also describes
 a drift confound in the harness large enough that the number should be read as a
 floor on the error rate rather than an estimate of it.
 
@@ -149,6 +157,45 @@ overrides `defaultVariant` — so flipping the default, which is what the harnes
 did, left the flag permanently disabled while appearing to work. An earlier
 scoring run counted it as a decline. That was the harness, and it is the reason
 every case now verifies its own injection and records the evidence.
+
+## Narration
+
+`-narrate <openai-compatible-url>` writes the ranking up in prose for a pager
+message or an incident channel, where a table of robust-z scores is the wrong
+shape. `RANGER_NARRATE_ENDPOINT`, `RANGER_NARRATE_MODEL` and
+`RANGER_NARRATE_KEY` set the same things from the environment. Off by default:
+ranger's answer does not depend on a network call, and a tool that localizes an
+incident should not stop working because a model provider is having one.
+
+The ordering is the design. A model that reads spans and names a culprit is
+guessing with extra steps — it cannot be reproduced, it cannot be audited, and
+when it is wrong it is wrong fluently. Here the ranking is produced first, the
+model is given only the finished ranking, and the prose is checked against it
+before it is shown. Two failures are rejected:
+
+- Prose that names a service other than the one the engine localized, or that
+  leads with a service the engine called *waiting on something below it*. That
+  is the caller/callee confusion the whole DAG walk exists to resolve, and it is
+  the mistake a narrator repeats most readily, because both spans really did get
+  slower.
+- Prose that supplies a cause at all when the engine declined to localize.
+  Turning "nothing here explains it" into a service name is how someone gets
+  woken up for the wrong thing.
+
+The model never sees a span, a trace id, or request content — only operation
+names, verdicts and the measured shifts. That is all it needs to write a
+paragraph, and trace payloads carry customer data while a narration endpoint is
+somebody else's server.
+
+## Not built
+
+- **Build provenance to a commit range.** `service.version` and
+  `deployment.environment` are carried through from resource attributes, so a
+  result can say which build it saw. Resolving a version to a commit range and
+  a diff needs a source of build metadata and is not implemented.
+- **A fresh baseline per case in the harness.** This is the drift confound
+  described above and the reason the accuracy table is a floor rather than an
+  estimate.
 
 ## License
 
