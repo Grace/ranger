@@ -31,8 +31,7 @@
 # consumer are different services and the blast radius covers both, so there is
 # no single responsible one. imageSlowLoad is described as "slow loading images
 # in the frontend" while the demo ships a separate image-provider service;
-# labelling it frontend would name the symptom rather than the cause, which is
-# exactly how recommendationCacheFailure came to look unwinnable.
+# labelling it frontend would name the symptom rather than the cause.
 #
 # Eight well-labelled cases are worth more than ten with two guesses in them.
 set -uo pipefail

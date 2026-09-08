@@ -11,11 +11,16 @@ from 4.2ms to 2.10s in the same window. The log pattern was wrong, not the flag.
 So this reads the captured windows instead, and deliberately does not import
 anything from ranger. It reports p50 span duration and error-span counts for the
 target service, both of which are visible in a single span without reconstructing
-the trace DAG. That is weaker than self time — it cannot tell a service that got
-slower from one waiting on a slow dependency — but telling those apart is the
-claim under test, and a verification step must not depend on the thing it is
-checking. For "did the flag change anything", duration and errors are enough,
-and they cannot silently disagree with the traces the way a log grep can.
+the trace DAG. A verification step must not depend on the thing it is checking.
+
+Two limits, and the second has already bitten. Duration is weaker than self
+time: it cannot tell a service that got slower from one waiting on a slow
+dependency, which is the claim under test. And pooling every operation of a
+service hides a shift confined to one of them — recommendationCacheFailure
+reported "NO DETECTABLE SHIFT" here while recommendation · get_product_list had
+grown its own work from 415us to 3.8ms, its total duration having *fallen* at
+the same time. Ranger localized it correctly on both runs. Read a decline from
+this script as "no service-wide change in duration", not as "nothing happened".
 
 Exit status is 0 when a shift is detected, 1 when nothing moved.
 """

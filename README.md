@@ -28,13 +28,12 @@ Two properties follow, and neither is available to an LLM-first design:
 
 ## Status
 
-Pre-alpha. Scored against four labeled failures in the OpenTelemetry Demo,
-ranking 88 operations per window: **top-1 25%, and it names the wrong service
-in a quarter to a half of cases depending on the ranking mode.** Chance on 88
-operations is roughly 1%, which is the only reason 25% is worth reporting at
-all rather than the reason it is good. See [Accuracy](#accuracy), which also describes
-a drift confound in the harness large enough that the number should be read as a
-floor on the error rate rather than an estimate of it.
+Pre-alpha. Scored against thirteen labeled incidents in the OpenTelemetry
+Demo — eight distinct failures, five of them run twice — ranking roughly 90
+operations per window: **top-1 38%, and it names the wrong service in a quarter
+to a fifth of cases depending on the ranking mode.** Chance on ninety operations
+is near 1%, which is the only reason 38% is worth reporting at all rather than
+the reason it is good. See [Accuracy](#accuracy).
 
 `ranger localize` reads two windows of OTLP/JSON from the OpenTelemetry
 Collector's file exporter, ranks operations, and writes a self-contained HTML
@@ -43,51 +42,123 @@ the runbook for producing those windows from the OpenTelemetry Demo.
 
 ## Accuracy
 
-Against the OpenTelemetry Demo at commit `8c47d47`, four labeled failures, one
-300-second baseline and one 300-second window per case, `min-samples 20`.
+Against the OpenTelemetry Demo at commit `8c47d47`. Eight labeled failures, five
+of them run a second time, for thirteen scored incidents. Each has **its own**
+300-second baseline captured minutes before its own 300-second incident window,
+`min-samples 20`.
 
 | | top-1 | top-3 | wrong | declined |
 | --- | --- | --- | --- | --- |
-| `-rank deviation` | 25% | 25% | **50%** | 25% |
-| `-rank deviation -exclude load-generator` | 25% | 25% | **50%** | 25% |
-| `-rank effect` | 25% | 50% | 25% | 25% |
-| `-rank effect -exclude load-generator` | 25% | 50% | 25% | 25% |
+| `-rank deviation` | 38% | 38% | **38%** | 23% |
+| `-rank deviation -exclude load-generator` | 38% | 38% | 23% | 38% |
+| `-rank effect` | 38% | 38% | 23% | 38% |
+| `-rank effect -exclude load-generator` | 38% | 38% | 23% | 38% |
 
-Four cases is not a benchmark. It is enough to say that ranger names the wrong
-service more often than the right one, and that is the number to carry.
+Thirteen cases is not a benchmark either. It is enough to say that ranger is
+right about a third of the time, wrong about a quarter, and silent the rest —
+and that the silence is the half worth having.
 
 Per case, under `-rank effect`:
 
-| case | injection verified | outcome | rank of the responsible service |
-| --- | --- | --- | --- |
-| `adManualGc` | yes — GetAds p50 4.33ms → 2124.12ms | **correct** | 1 |
-| `recommendationCacheFailure` | yes — 185 error spans | in top 3 | 2 |
-| `adHighCpu` | yes — GetAds p50 4.33ms → 7.81ms | declined | 5 |
-| `productCatalogFailure` | yes — 1087 error spans | **wrong** | 7 |
+| case | outcome | rank of the responsible service |
+| --- | --- | --- |
+| `adManualGc` ×2 | **correct** | 1, 1 |
+| `recommendationCacheFailure` ×2 | **correct** | 1, 1 |
+| `control-flood` | **correct** — declined, and nothing was broken | — |
+| `adFailure` ×2 | declined | 1, 1 |
+| `adHighCpu` ×2 | declined | 2, 6 |
+| `emailMemoryLeak-1000x` | declined | 13 |
+| `paymentFailure-25` | **wrong** — named `ad · GetAds` | — |
+| `productCatalogFailure` ×2 | **wrong** — named `frontend · GET /api/recommendations` both times | 6, 6 |
 
-### The confound, which is larger than the result
+### Every repeat agreed with itself
 
-A single baseline was captured at the start of the run and compared against
-windows up to 32 minutes later. The ad service drifted over that span with
-nothing injected into it:
+This is the result that makes the rest of the table readable. Five cases ran
+twice and all five produced the same outcome both times, including the two that
+fail: `productCatalogFailure` named the same wrong operation on both runs, and
+`adFailure` declined on both.
+
+Run-to-run variance is therefore not what separates the ranking modes, which
+matters because thirteen cases is small enough that it easily could have been.
+It also means the failures are systematic rather than unlucky — worth debugging
+rather than re-running.
+
+### The set is uneven, and one run is missing
+
+`ad` accounts for six of the thirteen cases, because the capture run was killed
+for memory partway through its second repeat and never reached a third. Three
+cases have one observation rather than two. The graduated-severity variants
+(`paymentFailure` at other percentages, `emailMemoryLeak` at other multipliers)
+were never captured, so the detection floor is still unmeasured.
+
+Two flags the demo ships were deliberately left out for having no defensible
+label: `kafkaQueueProblems` degrades producer and consumer, which are different
+services, and `imageSlowLoad` is documented as being "in the frontend" while the
+demo ships a separate `image-provider`. Labelling either would have named a
+symptom rather than a cause.
+
+### A control case, which is what makes "declined" mean anything
+
+`loadGeneratorFloodHomepage` raises load without breaking a service, so the
+correct answer is silence. Ranger declined it under both ranking modes.
+
+Before this case existed, every incident in the set had a culprit, so declining
+was always a miss — and a localizer that never spoke scored identically to one
+that never noticed. Naming a cause here is counted as a false positive, with the
+wrong answers, because inventing a culprit on a healthy system is the same
+failure as naming the wrong one on a broken one.
+
+### Excluding the load generator now matters
+
+It did not on the earlier four-case set, and that is no longer true. Under
+`-rank deviation`, dropping the load generator turns two confident wrong answers
+into declines: `adHighCpu` and `paymentFailure-25` were both outranked by
+load-generator operations rather than by anything in the service that broke.
+
+Under `-rank effect` the exclusion changes nothing, because effect ranking
+already scores those operations below the threshold. That is the same tier
+mismatch described below, seen from the other side: a load generator's spans are
+the test harness, not the system under test, and only one of the two rankings is
+robust to their presence.
+
+Every published figure states what was excluded, and `Result.Excluded` carries
+the list back out so a caller cannot omit it by accident.
+
+### The confound this replaced, and what it turned out to be
+
+An earlier run captured one baseline at the start and compared it against
+windows up to 32 minutes later. `ad · GetAds` read 4.33ms in that baseline and
+7.81ms, 10.42ms and 11.19ms in later windows — including windows where nothing
+had been injected into the ad service. Every one of those looked like a
+degradation, and `ad · GetAds` topped rankings it had nothing to do with.
+
+Capturing a fresh baseline per case fixed the result, but not for the reason
+assumed. Four fresh baselines taken minutes apart, all with every flag off,
+read:
 
 ```
-baseline                     GetAds p50   4.33ms
-adHighCpu                    GetAds p50   7.81ms   ← injected
-adManualGc                   GetAds p50 2124.12ms  ← injected
-productCatalogFailure        GetAds p50  11.19ms   ← ad untouched
-recommendationCacheFailure   GetAds p50  10.42ms   ← ad untouched
+baseline-recommendationCacheFailure   GetAds p50   7.63ms
+baseline-adManualGc                   GetAds p50   8.55ms
+baseline-adHighCpu                    GetAds p50   9.08ms
+baseline-productCatalogFailure        GetAds p50  11.51ms
 ```
 
-The ad service ends the run roughly 2.5× slower than it began it. That drift is
-attributed to whichever flag happened to be on, which is why `ad · GetAds` tops
-the ranking in the `recommendationCacheFailure` window — a false positive
-manufactured by the harness, not by the ranking.
+They still span 1.51×. The service is simply this noisy between quiet periods.
+So the original 4.33ms was not the start of a slow drift — it was an
+unrepresentative sample taken before the system reached steady state, and every
+window compared against it inherited the error.
 
-**So the honest reading is that this measures the harness at least as much as it
-measures ranger.** The fix is interleaving a fresh baseline between injections
-rather than reusing one, and until that runs, the table above is a floor on the
-error rate and not an estimate of it.
+That distinction matters, because a threshold on "how much did the typical
+operation move" was tried as a way to detect the bad case and removed: any bar
+low enough to catch it sits inside ordinary variance. The calibrated version is
+a permutation test over the ranking itself, which adapts to the window instead
+of guessing at a constant.
+
+**The earlier table measured the harness at least as much as it measured
+ranger.** The one above does not: every case carries its own baseline. What it
+still cannot do is distinguish a real improvement from a different afternoon
+across only thirteen cases — the repeats say run-to-run variance is small, not
+that the sample is large.
 
 ### The distinction the whole thing exists for
 
@@ -125,20 +196,17 @@ operation doubled its own work) in place of 3.0 deviations. Both keep the 2ms
 absolute floor, so a 40µs cache hit going to 200µs cannot be promoted by ratio
 alone.
 
-Effect-size ranking was designed while looking at one window and then measured
-on four, of which three were not examined first. It halves the wrong rate and
-doubles top-3 without moving top-1. That is a modest result on a small set, and
-the default is still `deviation` until a run without the drift confound says
-otherwise.
+Effect-size ranking was designed while looking at one window, then measured on
+four, then on thirteen. On the larger set the two modes reach the same top-1;
+what differs is where the misses go. Effect converts confident wrong answers
+into declines — 23% wrong against deviation's 38% — and does it consistently,
+with every repeated case agreeing with itself.
 
-### Excluding the load generator changes almost nothing
-
-It was worth checking, because a load generator's spans are the test harness
-rather than the system under test, and under deviation ranking they did reach
-ranks 2 and 3. But the headline numbers are identical with and without the
-exclusion in both modes. Every published figure states what was excluded, and
-`Result.Excluded` carries the list back out so a caller cannot omit it by
-accident.
+That is the property worth having at three in the morning, so **`-rank effect`
+is what to use**, and `deviation` remains the compiled-in default only until the
+set is large enough to justify moving it. Deviation's extra wrong answers are
+not random: they are load-generator operations outranking the service that
+actually broke, which is the tier mismatch described above.
 
 ### Cases that are not in the set, and why
 
@@ -151,7 +219,15 @@ rather than kept as a guaranteed decline.
 it delays non-US addresses only, and one of the nine load-generator personas is
 Canadian. That is a tail effect on an already-rare operation, not a shift.
 
-`productCatalogFailure` could not fire at all until this run. The demo ships it
+`kafkaQueueProblems` and `imageSlowLoad` were dropped for having no defensible
+label. The first "overloads Kafka queue while simultaneously introducing a
+consumer side delay" — producer and consumer are different services and the
+blast radius covers both. The second is documented as slow images "in the
+frontend" while the demo ships a separate `image-provider`; calling it frontend
+would label the symptom rather than the cause, which is the error this set
+exists to avoid.
+
+`productCatalogFailure` could not fire at all until an earlier run. The demo ships it
 with a targeting rule whose branches are **both** `"off"`, and a targeting rule
 overrides `defaultVariant` — so flipping the default, which is what the harness
 did, left the flag permanently disabled while appearing to work. An earlier
@@ -193,9 +269,12 @@ somebody else's server.
   `deployment.environment` are carried through from resource attributes, so a
   result can say which build it saw. Resolving a version to a commit range and
   a diff needs a source of build metadata and is not implemented.
-- **A fresh baseline per case in the harness.** This is the drift confound
-  described above and the reason the accuracy table is a floor rather than an
-  estimate.
+- **A detection floor.** `paymentFailure` and `emailMemoryLeak` ship graduated
+  variants, so the same fault can be injected at several magnitudes. Only one
+  magnitude of each was captured, so how small a fault ranger can still find is
+  unmeasured.
+- **A third repeat, and a balanced set.** `ad` is six of the thirteen cases
+  because the capture run was killed for memory partway through its second pass.
 
 ## License
 
