@@ -62,6 +62,18 @@ type Profile struct {
 	// they outrank real backend causes because their absolute shifts are
 	// larger by orders of magnitude.
 	MedianChildren float64
+
+	// SelfTimes is every observation, sorted. The summary above is three
+	// numbers out of a distribution, and three numbers cannot answer the
+	// questions worth asking of it: whether a shift is larger than chance
+	// would produce across this many operations, or whether the shape changed
+	// while the median did not. Manual GC is the case in point — the incident
+	// distribution is bimodal, and a median moves less than the operation did.
+	//
+	// The cost is one slice per operation for the life of a comparison, which
+	// against ~85 operations of a few hundred samples is nothing next to the
+	// traces already in memory.
+	SelfTimes []time.Duration
 }
 
 // Profile aggregates traces into one profile per operation.
@@ -112,6 +124,7 @@ func summarize(op trace.Operation, ss []Sample) *Profile {
 	return &Profile{
 		Op:             op,
 		Samples:        len(ss),
+		SelfTimes:      times,
 		MedianSelfTime: med,
 		P90SelfTime:    quantile(times, 0.9),
 		MADSelfTime:    mad(times, med),

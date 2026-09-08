@@ -13,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,22 +75,72 @@ func localizeCmd(args []string) error {
 	rank := fs.String("rank", "deviation", "how to score: deviation (robust-z, how surprising) or effect (share of the operation's own baseline)")
 	threshold := fs.Float64("threshold", -1, "override the reporting threshold; default 3.0 for deviation, 1.0 for effect")
 	top := fs.Int("top", 0, "also print the top N candidates and their arithmetic, including near misses when ranger declines")
+	stream := fs.String("stream", "", "continuous OTLP/JSON stream to select windows from, instead of two capture files")
+	incidentAt := fs.String("incident-at", "", "RFC3339 start of the incident window when using -stream")
+	baselineAt := fs.String("baseline-at", "", "RFC3339 start of the baseline window; default is one window before the incident")
+	windowFor := fs.Duration("window", 5*time.Minute, "window length when using -stream")
+	perm := fs.Int("permutations", 0, "permutation test iterations for calibrated significance; 0 disables")
+	permSeed := fs.Int64("permutation-seed", 1, "seed, so a reported p is reproducible")
 	narrateURL := fs.String("narrate", os.Getenv("RANGER_NARRATE_ENDPOINT"), "OpenAI-compatible chat completions URL; when set, the finished ranking is also written up in prose")
 	narrateModel := fs.String("narrate-model", envOr("RANGER_NARRATE_MODEL", "gpt-4o-mini"), "model id for -narrate")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *basePath == "" || *incPath == "" {
-		return fmt.Errorf("both -baseline and -incident are required")
-	}
+	var baseline, incident []*trace.Trace
+	window := ""
 
-	baseline, err := load(*basePath)
-	if err != nil {
-		return fmt.Errorf("baseline: %w", err)
-	}
-	incident, err := load(*incPath)
-	if err != nil {
-		return fmt.Errorf("incident: %w", err)
+	switch {
+	case *stream != "":
+		if *basePath != "" || *incPath != "" {
+			return fmt.Errorf("-stream selects windows itself; do not also pass -baseline or -incident")
+		}
+		if *incidentAt == "" {
+			return fmt.Errorf("-incident-at is required with -stream")
+		}
+		incStart, err := time.Parse(time.RFC3339, *incidentAt)
+		if err != nil {
+			return fmt.Errorf("-incident-at: %w", err)
+		}
+		// Default the baseline to the window immediately before the incident.
+		// Adjacent is the least stale choice available, which is the entire
+		// reason for selecting rather than capturing.
+		baseStart := incStart.Add(-*windowFor)
+		if *baselineAt != "" {
+			if baseStart, err = time.Parse(time.RFC3339, *baselineAt); err != nil {
+				return fmt.Errorf("-baseline-at: %w", err)
+			}
+		}
+
+		src := source.StreamReader{Open: func() (io.ReadCloser, error) { return os.Open(*stream) }}
+
+		bw := source.Window{From: baseStart, To: baseStart.Add(*windowFor)}
+		iw := source.Window{From: incStart, To: incStart.Add(*windowFor)}
+
+		sets, err := src.Windows([]source.Window{bw, iw})
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", *stream, err)
+		}
+		if baseline, err = assemble(sets[0], bw, "baseline"); err != nil {
+			return err
+		}
+		if incident, err = assemble(sets[1], iw, "incident"); err != nil {
+			return err
+		}
+		window = fmt.Sprintf("%s → %s", bw, iw)
+		fmt.Fprintf(os.Stderr, "baseline %s · incident %s · gap %s\n",
+			bw, iw, incStart.Sub(baseStart.Add(*windowFor)).Round(time.Second))
+
+	case *basePath != "" && *incPath != "":
+		var err error
+		if baseline, err = load(*basePath); err != nil {
+			return fmt.Errorf("baseline: %w", err)
+		}
+		if incident, err = load(*incPath); err != nil {
+			return fmt.Errorf("incident: %w", err)
+		}
+
+	default:
+		return fmt.Errorf("pass either -baseline and -incident, or -stream with -incident-at")
 	}
 
 	opt := localize.DefaultOptions()
@@ -106,7 +157,17 @@ func localizeCmd(args []string) error {
 		}
 	}
 
-	window := fmt.Sprintf("%s → %s", filepath.Base(*basePath), filepath.Base(*incPath))
+	if window == "" {
+		window = fmt.Sprintf("%s → %s", filepath.Base(*basePath), filepath.Base(*incPath))
+	}
+	if *perm > 0 {
+		sig := localize.Permute(localize.ProfileWindow(baseline), localize.ProfileWindow(incident), opt, *perm, *permSeed)
+		if sig.Assessed {
+			fmt.Fprintf(os.Stderr,
+				"significance: top score %.2f · p=%.3f over %d permutations · chance reaches %.2f one time in twenty\n",
+				sig.Observed, sig.P, sig.Permutations, sig.NullP95)
+		}
+	}
 	return emit(baseline, incident, opt, window, *out, *maxTraces, *top, narrate.Options{
 		Endpoint: *narrateURL,
 		Model:    *narrateModel,
@@ -150,6 +211,15 @@ func emit(baseline, incident []*trace.Trace, opt localize.Options, window, out s
 
 	// Say the answer on stderr too. Someone running this in an incident should
 	// not have to open a browser to learn whether it found anything.
+	if w := res.Window; w.Assessed {
+		// Context, not a verdict. How far the typical operation moved says
+		// whether the top of the ranking stands above its own background or
+		// merely sits at the top of a background that moved — but the spread
+		// between quiet baselines is wide enough that no constant turns this
+		// into an answer. The permutation p above is the calibrated version.
+		fmt.Fprintf(os.Stderr, "window: %d ops · median shift %.2fx · p90 %.2fx · top/median %.0f\n",
+			w.Ops, w.MedianShift, w.P90Shift, w.TopToMedian)
+	}
 	if res.Localized {
 		top := res.Candidates[0]
 		fmt.Fprintf(os.Stderr, "localized: %s (%s, self time %v → %v)\n",
@@ -231,4 +301,16 @@ func shortDur(d time.Duration) string {
 		sign, d = "-", -d
 	}
 	return sign + d.Round(time.Microsecond).String()
+}
+
+// assemble turns one window's spans into traces.
+//
+// An empty window is an error rather than an empty ranking: no spans means the
+// range missed the data, and answering "nothing explains this" to a question
+// that was never asked would be worse than failing.
+func assemble(spans []trace.Span, w source.Window, label string) ([]*trace.Trace, error) {
+	if len(spans) == 0 {
+		return nil, fmt.Errorf("%s window %s contains no spans", label, w)
+	}
+	return trace.Assemble(spans), nil
 }

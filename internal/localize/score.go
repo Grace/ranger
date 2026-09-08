@@ -99,6 +99,10 @@ type Options struct {
 	// ByDeviation, which is what ranger shipped first.
 	Rank Ranking
 
+	// MinWindowOps is how many ranked operations a window needs before drift
+	// can be claimed about it. Zero means the default.
+	MinWindowOps int
+
 	// ExcludeServices are services removed from the ranking entirely.
 	//
 	// This exists for instrumentation that is not part of the system being
@@ -128,6 +132,7 @@ func DefaultOptions() Options {
 		MinSelfTimeShift:  2 * time.Millisecond,
 		MinErrorRateShift: 0.02,
 		ReportThreshold:   3.0,
+		MinWindowOps:      DefaultMinWindowOps,
 	}
 }
 
@@ -168,6 +173,52 @@ type Result struct {
 
 	Considered int // operations that had enough samples to rank
 	Skipped    int // operations dropped for thin samples
+
+	// Window carries whether the two windows are comparable at all. A ranking
+	// is only a localization if the rest of the system held still while one
+	// operation moved.
+	Window WindowHealth
+}
+
+// WindowHealth describes how much the window moved as a whole.
+//
+// Ranking assumes a background that did not change. When it did — the load
+// shifted, a noisy neighbour woke up, the baseline was captured half an hour
+// earlier than the incident — every operation's shift carries that common
+// movement, and whichever operation happens to sit on top of the ranking gets
+// named as a cause it had nothing to do with. Ranger produced exactly that
+// result: `ad · GetAds` topped a window in which nothing had been injected
+// into the ad service, because the whole system had drifted 2.5x underneath
+// the comparison.
+//
+// The two shapes are different and the difference is measurable without a
+// service graph, without knowing what changed, and without a second baseline:
+//
+//	a fault  — one operation moves enormously, the median operation does not
+//	drift    — the median operation moves too, and the top of the ranking is
+//	           barely above it
+type WindowHealth struct {
+	// MedianShift is the median ratio of incident to baseline self time
+	// across every ranked operation. 1.0 means the typical operation did not
+	// move. 1.26 means the typical operation got 26% slower, which is a
+	// statement about the window rather than about any operation in it.
+	MedianShift float64
+
+	// P90Shift is the same ratio at the 90th percentile.
+	P90Shift float64
+
+	// TopToMedian is the leading candidate's shift over the median shift. It
+	// is the discriminator: a localized fault stands orders of magnitude above
+	// its own background, and drift does not.
+	TopToMedian float64
+
+	// Ops is how many operations the measurement is over. Below
+	// MinWindowOps, Assessed is false: too small a population to say anything
+	// about a background.
+	Ops int
+
+	// Assessed reports whether the window was large enough to describe.
+	Assessed bool
 }
 
 // Localize ranks operations by how much of the incident they explain.
@@ -245,9 +296,100 @@ func Localize(baseline, incident map[trace.Operation]*Profile, opt Options) Resu
 	})
 
 	res.Candidates = cands
+	res.Window = windowHealth(cands, opt)
 	res.Localized = len(cands) > 0 && cands[0].Score >= opt.ReportThreshold &&
 		cands[0].Verdict != WaitingOnSomethingBelow
 	return res
+}
+
+// A threshold on MedianShift was tried here and removed.
+//
+// The idea was to refuse to localize a window whose background had moved: a
+// fault is one operation moving while the rest hold still, drift is everything
+// moving together, and 1.20 looked like it separated them. It does not. Four
+// baselines captured minutes apart from the same quiet system put ad · GetAds
+// at 7.63ms, 8.55ms, 9.08ms and 11.51ms — a 1.51x spread with nothing injected.
+// A bar at 1.20 sits inside that, so it was measuring the system breathing, and
+// the one window it was built to catch came in at 1.19 and sailed under it.
+//
+// The numbers below are still worth reporting. What is not available is a
+// constant that turns them into a verdict, and the permutation test in
+// permute.go answers the question that constant was standing in for.
+
+// DefaultMinWindowOps is the smallest ranked population this check will draw a
+// conclusion from.
+//
+// The question it asks — did the rest of the system hold still? — presumes
+// there is a rest of the system. Over two operations there is no background to
+// measure and the median is just one of the two, so a single large fault reads
+// as a drifting window. That is not a tuning problem, it is the statistic being
+// undefined at that size, and the honest response is to decline to judge rather
+// than to loosen the threshold until the answer looks right.
+const DefaultMinWindowOps = 12
+
+// windowHealth measures how much the ranked population moved as a whole.
+//
+// It reads the same relative shifts the ranking is built from, so it costs
+// nothing extra and cannot disagree with the ranking about what the numbers
+// were. Operations that appeared in the incident window with no baseline are
+// skipped: they have no ratio, and counting them as an infinite shift would
+// let a handful of new operations declare every window drifting.
+func windowHealth(cands []Candidate, opt Options) WindowHealth {
+	minOps := opt.MinWindowOps
+	if minOps <= 0 {
+		minOps = DefaultMinWindowOps
+	}
+
+	ratios := make([]float64, 0, len(cands))
+	for _, c := range cands {
+		if c.Baseline == nil || c.Baseline.MedianSelfTime <= 0 {
+			continue
+		}
+		ratios = append(ratios, float64(c.Incident.MedianSelfTime)/float64(c.Baseline.MedianSelfTime))
+	}
+	if len(ratios) == 0 {
+		return WindowHealth{}
+	}
+	sort.Float64s(ratios)
+
+	h := WindowHealth{
+		Ops:         len(ratios),
+		MedianShift: median(ratios),
+		P90Shift:    percentile(ratios, 0.90),
+	}
+	if h.MedianShift > 0 {
+		h.TopToMedian = ratios[len(ratios)-1] / h.MedianShift
+	}
+	h.Assessed = len(ratios) >= minOps
+	return h
+}
+
+// median averages the two middle values on an even-length slice. Nearest-rank
+// would return the larger of them, which on a two-operation window makes the
+// fault its own background.
+func median(sorted []float64) float64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
+}
+
+// percentile returns the value at q in a sorted slice, without interpolating.
+// Nearest-rank is the right choice here: these are a few dozen ratios, and an
+// interpolated value between two operations describes no operation.
+func percentile(sorted []float64, q float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	i := int(float64(len(sorted)) * q)
+	if i >= len(sorted) {
+		i = len(sorted) - 1
+	}
+	return sorted[i]
 }
 
 // classify decides what happened to one operation and how much weight to give
