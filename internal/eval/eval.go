@@ -29,7 +29,23 @@ type Case struct {
 
 	// ExpectService is ground truth: the service whose own work should have
 	// changed. Not the service where the symptom was observed.
+	//
+	// Left empty only on a Control case.
 	ExpectService string `json:"expectService"`
+
+	// Control marks a case where nothing is responsible and declining is the
+	// correct answer.
+	//
+	// Without cases of this shape the decline column cannot be read: if every
+	// case has a culprit, silence is always a miss, and a localizer that never
+	// speaks scores identically to one that never notices. Raising load
+	// without breaking anything separates them.
+	//
+	// It is a declared field rather than an inferred one. A missing
+	// expectService is far more likely to be a typo than an intention, and
+	// silently scoring that case as a control would turn a mistake in the
+	// manifest into a free correct answer.
+	Control bool `json:"control,omitempty"`
 
 	// ExpectOperation optionally narrows ground truth to one operation. Left
 	// empty, any operation belonging to ExpectService counts.
@@ -59,9 +75,20 @@ const (
 	Wrong Outcome = "wrong"
 
 	// Declined means nothing cleared the reporting threshold. Not a success,
-	// but not a lie either.
+	// but not a lie either — except on a control case, where it is the right
+	// answer and scores Correct.
 	Declined Outcome = "declined"
+
+	// FalsePositive means ranger named a cause on a case that had none. It is
+	// counted with Wrong, because inventing a culprit when nothing broke is
+	// the same failure as naming the wrong one, and arguably worse: there is
+	// no incident to discover the mistake against.
+	FalsePositive Outcome = "false positive"
 )
+
+// IsControl reports whether a case has no responsible service, so that
+// declining is correct.
+func (c Case) IsControl() bool { return c.Control }
 
 // CaseResult is one scored case.
 type CaseResult struct {
@@ -141,7 +168,7 @@ func Run(cases []Case, load Loader, opt localize.Options) (Summary, error) {
 			s.Top3++
 		case InTop3:
 			s.Top3++
-		case Wrong:
+		case Wrong, FalsePositive:
 			s.Wrong++
 		case Declined:
 			s.Declined++
@@ -175,11 +202,22 @@ func score(c Case, res localize.Result) CaseResult {
 	r.Rank = rank
 
 	if !res.Localized {
-		r.Outcome = Declined
+		// On a control, silence is the answer.
+		if c.IsControl() {
+			r.Outcome = Correct
+		} else {
+			r.Outcome = Declined
+		}
 		return r
 	}
 
 	top := res.Candidates[0]
+	if c.IsControl() {
+		r.Named = top.Op.String()
+		r.Verdict = string(top.Verdict)
+		r.Outcome = FalsePositive
+		return r
+	}
 	r.Named = top.Op.String()
 	r.Verdict = string(top.Verdict)
 
@@ -214,8 +252,10 @@ func ReadManifest(r io.Reader) ([]Case, error) {
 		switch {
 		case c.Name == "":
 			return nil, fmt.Errorf("case %d: name is required", i)
-		case c.ExpectService == "":
-			return nil, fmt.Errorf("%s: expectService is required — a case with no ground truth cannot be scored", c.Name)
+		case c.ExpectService == "" && !c.Control:
+			return nil, fmt.Errorf("%s: expectService is required — a case with no ground truth cannot be scored; set \"control\": true if declining is the correct answer", c.Name)
+		case c.ExpectService != "" && c.Control:
+			return nil, fmt.Errorf("%s: a control case cannot also name an expected service", c.Name)
 		case c.BaselineFile == "" || c.IncidentFile == "":
 			return nil, fmt.Errorf("%s: both baselineFile and incidentFile are required", c.Name)
 		}

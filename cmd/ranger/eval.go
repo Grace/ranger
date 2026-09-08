@@ -93,7 +93,11 @@ func printSummary(s eval.Summary, excluded []string) {
 		if named == "" {
 			named = "(declined)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Case.Name, r.Outcome, rank, named, r.Case.ExpectService)
+		expected := r.Case.ExpectService
+		if r.Case.IsControl() {
+			expected = "(control — nothing broke)"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Case.Name, r.Outcome, rank, named, expected)
 	}
 	w.Flush()
 

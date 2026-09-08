@@ -137,3 +137,52 @@ func TestManifestSortsCasesForStableReports(t *testing.T) {
 		t.Errorf("first case = %q, want alpha", cases[0].Name)
 	}
 }
+
+// A control case has no responsible service, so silence is the right answer and
+// naming one is a false positive. Without these the decline column is
+// uninterpretable: a localizer that never speaks scores the same as one that
+// never notices.
+func TestDecliningAControlIsCorrect(t *testing.T) {
+	c := Case{Name: "flood", Control: true}
+	if !c.IsControl() {
+		t.Fatal("a declared control is a control")
+	}
+	got := score(c, localize.Result{Localized: false})
+	if got.Outcome != Correct {
+		t.Errorf("declining a control should be correct, got %q", got.Outcome)
+	}
+}
+
+func TestNamingACauseOnAControlIsAFalsePositive(t *testing.T) {
+	c := Case{Name: "flood", Control: true}
+	res := localize.Result{
+		Localized: true,
+		Candidates: []localize.Candidate{{
+			Op:      trace.Operation{Service: "ad", Name: "GetAds"},
+			Verdict: localize.Slower,
+			Score:   9,
+		}},
+	}
+	got := score(c, res)
+	if got.Outcome != FalsePositive {
+		t.Errorf("naming a cause when nothing broke is a false positive, got %q", got.Outcome)
+	}
+	if got.Named == "" {
+		t.Error("a false positive must record what was named")
+	}
+}
+
+// False positives are counted with wrong answers, because inventing a culprit
+// on a healthy system is the same failure mode as naming the wrong one.
+func TestFalsePositivesCountAsWrong(t *testing.T) {
+	cases := []Case{{Name: "flood", Control: true, BaselineFile: "b", IncidentFile: "i"}}
+	load := func(string) ([]*trace.Trace, error) { return nil, nil }
+	// Localize over empty windows declines, which on a control is correct.
+	s, err := Run(cases, load, localize.DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Correct != 1 || s.Wrong != 0 {
+		t.Errorf("empty windows on a control should score correct, got %+v", s)
+	}
+}
