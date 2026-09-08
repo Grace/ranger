@@ -53,6 +53,18 @@ type Candidate struct {
 	// dwarfs a gRPC handler tripling 3.5ms, and only one of those is a cause.
 	RelativeShift float64
 
+	// KS and EarthMover read the whole self-time distribution rather than its
+	// median. They are reported, not scored on: the published accuracy
+	// describes the current ranking, and moving the measurement and the
+	// ranking together would leave any change unattributable to either.
+	//
+	// They answer different questions and both are kept. KS is scale free and
+	// saturates — once two samples are disjoint it reads 1.0 whether they are
+	// microseconds or hours apart. EarthMover keeps the units, so it can say
+	// how much slower rather than how differently distributed.
+	KS         float64
+	EarthMover time.Duration
+
 	Baseline *Profile
 	Incident *Profile
 
@@ -71,6 +83,17 @@ const (
 	// baseline. This is an effect size, and it is what survives comparison
 	// across tiers with wildly different absolute latencies.
 	ByEffect Ranking = "effect"
+
+	// ByEffectAdjusted is ByEffect with the window's common movement removed:
+	// each operation is scored against how far the *typical* operation moved
+	// rather than against zero.
+	//
+	// A threshold on that common movement was tried first and removed, because
+	// four baselines from the same quiet system span 1.51x and any useful bar
+	// sits inside ordinary variance. Subtracting is the standard treatment and
+	// needs no threshold — if the whole window drifted, every operation carries
+	// that drift and dividing it out leaves what is specific to each.
+	ByEffectAdjusted Ranking = "effect-adjusted"
 )
 
 // Options tunes the thresholds. The defaults are deliberately conservative:
@@ -148,7 +171,10 @@ func (o Options) ApplyRanking(r Ranking, explicit bool, threshold float64) Optio
 	switch {
 	case explicit:
 		o.ReportThreshold = threshold
-	case r == ByEffect:
+	case r == ByEffect, r == ByEffectAdjusted:
+		// Same bar for both. Adjusted scores are the same quantity measured
+		// against a moving zero, so "the operation doubled its own work
+		// relative to what everything else did" is still the claim.
 		o.ReportThreshold = 1.0
 	}
 	return o
@@ -279,24 +305,25 @@ func Localize(baseline, incident map[trace.Operation]*Profile, opt Options) Resu
 		if base.MedianSelfTime > 0 {
 			c.RelativeShift = float64(selfShift) / float64(base.MedianSelfTime)
 		}
+		c.KS = KS(base.SelfTimes, inc.SelfTimes)
+		c.EarthMover = Wasserstein(base.SelfTimes, inc.SelfTimes)
 		c.Verdict, c.Score = classify(c, opt)
 		cands = append(cands, c)
 	}
 
-	// Deterministic order: score, then depth (deeper wins — a caller's shift
-	// is at least partly its callee's), then name.
-	sort.Slice(cands, func(i, j int) bool {
-		if cands[i].Score != cands[j].Score {
-			return cands[i].Score > cands[j].Score
-		}
-		if cands[i].Depth != cands[j].Depth {
-			return cands[i].Depth > cands[j].Depth
-		}
-		return cands[i].Op.String() < cands[j].Op.String()
-	})
+	sortCandidates(cands)
+
+	res.Window = windowHealth(cands, opt)
+
+	// Adjusted ranking needs the window before it can score, so it is a second
+	// pass: the common movement is a property of the population, not of any
+	// operation in it.
+	if opt.Rank == ByEffectAdjusted {
+		reScoreAdjusted(cands, res.Window, opt)
+		sortCandidates(cands)
+	}
 
 	res.Candidates = cands
-	res.Window = windowHealth(cands, opt)
 	res.Localized = len(cands) > 0 && cands[0].Score >= opt.ReportThreshold &&
 		cands[0].Verdict != WaitingOnSomethingBelow
 	return res
@@ -392,6 +419,64 @@ func percentile(sorted []float64, q float64) float64 {
 	return sorted[i]
 }
 
+// sortCandidates puts the ranking in deterministic order: score, then depth
+// (deeper wins — a caller's shift is at least partly its callee's), then name.
+func sortCandidates(cands []Candidate) {
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].Score != cands[j].Score {
+			return cands[i].Score > cands[j].Score
+		}
+		if cands[i].Depth != cands[j].Depth {
+			return cands[i].Depth > cands[j].Depth
+		}
+		return cands[i].Op.String() < cands[j].Op.String()
+	})
+}
+
+// reScoreAdjusted divides each operation's shift ratio by the window's median
+// ratio, so an operation that merely kept pace with a drifting background
+// scores zero rather than scoring the drift.
+//
+// Only operations already classified as slower are touched. A failing
+// operation is scored on error rate, which does not carry the window's latency
+// drift, and a waiter is scored zero by construction.
+func reScoreAdjusted(cands []Candidate, w WindowHealth, opt Options) {
+	// Only deflate a background that got slower. Dividing by a median below
+	// 1.0 inflates every operation instead of correcting it, and that is not a
+	// hypothetical: adHighCpu's windows came in at 0.81x and 0.86x, and the
+	// naive version pushed marginal operations over the threshold in both —
+	// converting two honest declines into a wrong answer and a near miss, and
+	// inventing a culprit on the control window where nothing was broken.
+	//
+	// The asymmetry is the point rather than a fudge. Drift that makes the
+	// system look worse is what manufactures false positives; a background
+	// that sped up cannot, so there is nothing to remove.
+	if !w.Assessed || w.MedianShift <= 1 {
+		return
+	}
+	for i := range cands {
+		c := &cands[i]
+		if c.Verdict != Slower || c.Baseline == nil || c.Baseline.MedianSelfTime <= 0 {
+			continue
+		}
+		// Only rescale what classify already admitted. Writing a score here
+		// unconditionally overwrites its absolute floor, and the floor is what
+		// stops an operation being promoted by ratio alone — the control
+		// window promoted ad · getAdsByCategory at 310µs → 632µs, a clean
+		// doubling of a third of a millisecond, on a system where nothing was
+		// broken. Adjustment rescales a finding; it does not create one.
+		if c.Score <= 0 {
+			continue
+		}
+		ratio := float64(c.Incident.MedianSelfTime) / float64(c.Baseline.MedianSelfTime)
+		adjusted := ratio/w.MedianShift - 1
+		if adjusted < 0 {
+			adjusted = 0
+		}
+		c.Score = adjusted
+	}
+}
+
 // classify decides what happened to one operation and how much weight to give
 // it.
 //
@@ -424,7 +509,7 @@ func classify(c Candidate, opt Options) (Verdict, float64) {
 	// noise before its effect size means anything. Only the magnitude that
 	// gets reported changes.
 	mag := c.SelfTimeZ
-	if opt.Rank == ByEffect {
+	if opt.Rank == ByEffect || opt.Rank == ByEffectAdjusted {
 		mag = c.RelativeShift
 	}
 

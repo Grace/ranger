@@ -47,7 +47,7 @@ func evalCmd(args []string) error {
 	opt := localize.DefaultOptions()
 	opt.MinSamples = *minSamples
 	opt = opt.ApplyRanking(localize.Ranking(*rank), *threshold >= 0, *threshold)
-	if opt.Rank != localize.ByDeviation && opt.Rank != localize.ByEffect {
+	if opt.Rank != localize.ByDeviation && opt.Rank != localize.ByEffect && opt.Rank != localize.ByEffectAdjusted {
 		return fmt.Errorf("-rank must be deviation or effect, got %q", *rank)
 	}
 	if *exclude != "" {
